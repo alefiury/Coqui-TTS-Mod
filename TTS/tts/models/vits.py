@@ -598,6 +598,85 @@ class VitsArgs(Coqpit):
     interpolate_z: bool = True
     reinit_DP: bool = False
     reinit_text_encoder: bool = False
+    use_prosody_embedding: bool = False
+    embedded_prosody_dim: int = 0
+
+
+class ProsodyEncoder(nn.Module):
+    def __init__(
+            self,
+            conv_filters: List[int] = [512, 512, 512, 512, 512],
+            lstm_units: int = 512,
+            z_dim: int = 512,
+        ):
+        """
+        Initializes the ProsodyReferenceEncoder module.
+
+        Args:
+            conv_filters (list of int): Number of filters for each convolutional layer.
+            lstm_units (int): Number of units in the LSTM layer.
+            z_dim (int): Dimensionality of the latent (prosody) space.
+        """
+        super(ProsodyEncoder, self).__init__()
+
+        # Convolutional layers
+        self.conv_layers = nn.ModuleList()
+        for i in range(len(conv_filters) - 1):
+            self.conv_layers.append(
+                nn.Conv1d(conv_filters[i], conv_filters[i + 1], kernel_size=3, stride=1, padding=1)
+            )
+
+        # Bidirectional LSTM
+        self.lstm = nn.LSTM(conv_filters[-1], lstm_units, bidirectional=True)
+
+        # Fully connected layers for mean and log variance
+        self.fc_mu = nn.Linear(2 * lstm_units, z_dim)
+        self.fc_logvar = nn.Linear(2 * lstm_units, z_dim)
+
+    def reparametrize(self, mu, logvar):
+        """
+        Reparametrization trick for sampling from a Gaussian distribution.
+
+        Args:
+            mu (Tensor): Mean of the Gaussian distribution.
+            logvar (Tensor): Log variance of the Gaussian distribution.
+
+        Returns:
+            Tensor: Sampled latent variable.
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        """
+        Forward pass of the encoder.
+
+        Args:
+            x (Tensor): Input tensor representing the speech signal.
+
+        Returns:
+            Tuple[Tensor, Tensor]: Mean and log variance of the latent prosody space.
+        """
+        # Pass through convolutional layers with ReLU activations
+        for conv in self.conv_layers:
+            x = F.relu(conv(x))
+
+        # Permute dimensions for LSTM layer
+        x = x.permute(2, 0, 1)
+
+        # LSTM layer
+        x, _ = self.lstm(x)
+        x = x[-1]
+
+        # Compute mean and log variance
+        mu = self.fc_mu(x)
+        logvar = self.fc_logvar(x)
+
+        # Reparametrization trick
+        z = self.reparametrize(mu, logvar)
+
+        return z, mu, logvar
 
 
 class Vits(BaseTTS):
@@ -649,6 +728,7 @@ class Vits(BaseTTS):
         self.noise_scale_dp = self.args.noise_scale_dp
         self.max_inference_len = self.args.max_inference_len
         self.spec_segment_size = self.args.spec_segment_size
+        self.embedded_prosody_dim = self.args.embedded_prosody_dim
 
         self.text_encoder = TextEncoder(
             self.args.num_chars,
@@ -660,6 +740,13 @@ class Vits(BaseTTS):
             self.args.kernel_size_text_encoder,
             self.args.dropout_p_text_encoder,
             language_emb_dim=self.embedded_language_dim,
+            prosody_emb_dim=self.embedded_prosody_dim,
+        )
+
+        self.prosody_encoder = ProsodyEncoder(
+            conv_filters=[self.args.out_channels, 512, 512, 512, 512],
+            lstm_units=512,
+            z_dim=self.embedded_prosody_dim,
         )
 
         self.posterior_encoder = PosteriorEncoder(
@@ -690,6 +777,7 @@ class Vits(BaseTTS):
                 4,
                 cond_channels=self.embedded_speaker_dim if self.args.condition_dp_on_speaker else 0,
                 language_emb_dim=self.embedded_language_dim,
+                prosody_emb_dim=self.embedded_prosody_dim,
             )
         else:
             self.duration_predictor = DurationPredictor(
@@ -699,6 +787,7 @@ class Vits(BaseTTS):
                 self.args.dropout_p_duration_predictor,
                 cond_channels=self.embedded_speaker_dim,
                 language_emb_dim=self.embedded_language_dim,
+                prosody_emb_dim=self.embedded_prosody_dim,
             )
 
         self.waveform_decoder = HifiganGenerator(
@@ -891,7 +980,11 @@ class Vits(BaseTTS):
         if "durations" in aux_input and aux_input["durations"] is not None:
             durations = aux_input["durations"]
 
-        return sid, g, lid, durations
+        spec = None
+        if "spec" in aux_input and aux_input["spec"] is not None:
+            spec = aux_input["spec"]
+
+        return sid, g, lid, durations, spec
 
     def _set_speaker_input(self, aux_input: Dict):
         d_vectors = aux_input.get("d_vectors", None)
@@ -906,7 +999,7 @@ class Vits(BaseTTS):
         g = speaker_ids if speaker_ids is not None else d_vectors
         return g
 
-    def forward_mas(self, outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g, lang_emb):
+    def forward_mas(self, outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g, lang_emb, prosody_emb):
         # find the alignment path
         attn_mask = torch.unsqueeze(x_mask, -1) * torch.unsqueeze(y_mask, 2)
         with torch.no_grad():
@@ -927,6 +1020,7 @@ class Vits(BaseTTS):
                 attn_durations,
                 g=g.detach() if self.args.detach_dp_input and g is not None else g,
                 lang_emb=lang_emb.detach() if self.args.detach_dp_input and lang_emb is not None else lang_emb,
+                prosody_emb=prosody_emb.detach() if self.args.detach_dp_input and prosody_emb is not None else prosody_emb,
             )
             loss_duration = loss_duration / torch.sum(x_mask)
         else:
@@ -936,6 +1030,7 @@ class Vits(BaseTTS):
                 x_mask,
                 g=g.detach() if self.args.detach_dp_input and g is not None else g,
                 lang_emb=lang_emb.detach() if self.args.detach_dp_input and lang_emb is not None else lang_emb,
+                prosody_emb=prosody_emb.detach() if self.args.detach_dp_input and prosody_emb is not None else prosody_emb,
             )
             loss_duration = torch.sum((log_durations - attn_log_durations) ** 2, [1, 2]) / torch.sum(x_mask)
         outputs["loss_duration"] = loss_duration
@@ -1005,7 +1100,7 @@ class Vits(BaseTTS):
             - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
         outputs = {}
-        sid, g, lid, _ = self._set_cond_input(aux_input)
+        sid, g, lid, _, _ = self._set_cond_input(aux_input)
         # speaker embedding
         if self.args.use_speaker_embedding and sid is not None:
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
@@ -1015,7 +1110,13 @@ class Vits(BaseTTS):
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
-        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
+        # prosody embedding
+        prosody_emb = None
+        if self.args.use_prosody_embedding:
+            prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(y)
+            prosody_emb = prosody_emb.unsqueeze(-1)
+
+        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, prosody_emb=prosody_emb)
 
         # posterior encoder
         z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=g)
@@ -1024,7 +1125,7 @@ class Vits(BaseTTS):
         z_p = self.flow(z, y_mask, g=g)
 
         # duration predictor
-        outputs, attn = self.forward_mas(outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g=g, lang_emb=lang_emb)
+        outputs, attn = self.forward_mas(outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g=g, lang_emb=lang_emb, prosody_emb=prosody_emb)
 
         # expand prior
         m_p = torch.einsum("klmn, kjm -> kjn", [attn, m_p])
@@ -1075,6 +1176,8 @@ class Vits(BaseTTS):
                 "gt_spk_emb": gt_spk_emb,
                 "syn_spk_emb": syn_spk_emb,
                 "slice_ids": slice_ids,
+                "prosody_mu": prosody_mu if self.args.use_prosody_embedding else None,
+                "prosody_logvar": prosody_logvar if self.args.use_prosody_embedding else None,
             }
         )
         return outputs
@@ -1089,7 +1192,7 @@ class Vits(BaseTTS):
     def inference(
         self,
         x,
-        aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None},
+        aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None, "spec": None},
     ):  # pylint: disable=dangerous-default-value
         """
         Note:
@@ -1109,7 +1212,7 @@ class Vits(BaseTTS):
             - m_p: :math:`[B, C, T_dec]`
             - logs_p: :math:`[B, C, T_dec]`
         """
-        sid, g, lid, durations = self._set_cond_input(aux_input)
+        sid, g, lid, durations, spec = self._set_cond_input(aux_input)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
@@ -1121,7 +1224,11 @@ class Vits(BaseTTS):
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
-        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
+        if self.args.use_prosody_embedding:
+            prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(spec)
+            prosody_emb = prosody_emb.unsqueeze(-1)
+
+        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, prosody_emb=prosody_emb)
 
         if durations is None:
             if self.args.use_sdp:
@@ -1132,10 +1239,15 @@ class Vits(BaseTTS):
                     reverse=True,
                     noise_scale=self.inference_noise_scale_dp,
                     lang_emb=lang_emb,
+                    prosody_emb=prosody_emb,
                 )
             else:
                 logw = self.duration_predictor(
-                    x, x_mask, g=g if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
+                    x,
+                    x_mask,
+                    g=g if self.args.condition_dp_on_speaker else None,
+                    lang_emb=lang_emb,
+                    prosody_emb=prosody_emb
                 )
             w = torch.exp(logw) * x_mask * self.length_scale
         else:
@@ -1700,25 +1812,35 @@ class Vits(BaseTTS):
     ):  # pylint: disable=unused-argument, redefined-builtin
         """Load the model checkpoint and setup for training or inference"""
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"), cache=cache)
-        # compat band-aid for the pre-trained models to not use the encoder baked into the model
-        # TODO: consider baking the speaker encoder into the model and call it from there.
-        # as it is probably easier for model distribution.
-        state["model"] = {k: v for k, v in state["model"].items() if "speaker_encoder" not in k}
+        # # compat band-aid for the pre-trained models to not use the encoder baked into the model
+        # # TODO: consider baking the speaker encoder into the model and call it from there.
+        # # as it is probably easier for model distribution.
+        # state["model"] = {k: v for k, v in state["model"].items() if "speaker_encoder" not in k}
 
-        if self.args.encoder_sample_rate is not None and eval:
-            # audio resampler is not used in inference time
-            self.audio_resampler = None
+        # if self.args.encoder_sample_rate is not None and eval:
+        #     # audio resampler is not used in inference time
+        #     self.audio_resampler = None
 
-        # handle fine-tuning from a checkpoint with additional speakers
-        if hasattr(self, "emb_g") and state["model"]["emb_g.weight"].shape != self.emb_g.weight.shape:
-            num_new_speakers = self.emb_g.weight.shape[0] - state["model"]["emb_g.weight"].shape[0]
-            print(f" > Loading checkpoint with {num_new_speakers} additional speakers.")
-            emb_g = state["model"]["emb_g.weight"]
-            new_row = torch.randn(num_new_speakers, emb_g.shape[1])
-            emb_g = torch.cat([emb_g, new_row], axis=0)
-            state["model"]["emb_g.weight"] = emb_g
+        # # handle fine-tuning from a checkpoint with additional speakers
+        # if hasattr(self, "emb_g") and state["model"]["emb_g.weight"].shape != self.emb_g.weight.shape:
+        #     num_new_speakers = self.emb_g.weight.shape[0] - state["model"]["emb_g.weight"].shape[0]
+        #     print(f" > Loading checkpoint with {num_new_speakers} additional speakers.")
+        #     emb_g = state["model"]["emb_g.weight"]
+        #     new_row = torch.randn(num_new_speakers, emb_g.shape[1])
+        #     emb_g = torch.cat([emb_g, new_row], axis=0)
+        #     state["model"]["emb_g.weight"] = emb_g
+
+        # Filter the state dict to include only matching shapes
+        model_state_dict = self.state_dict()
+        filtered_state_dict = {k: v for k, v in state["model"].items() if k in model_state_dict and model_state_dict[k].size() == v.size()}
+
+        # Parameters that will be loaded into the model and their corresponding shapes
+        print(f" > Loading {len(filtered_state_dict)} parameters from checkpoint.")
+        for k, v in filtered_state_dict.items():
+            print(f" | > {k} : {v.shape}")
+
         # load the model weights
-        self.load_state_dict(state["model"], strict=strict)
+        self.load_state_dict(filtered_state_dict, strict=False)
 
         if eval:
             self.eval()
