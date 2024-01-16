@@ -34,7 +34,7 @@ RESTORE_PATH = None  # "/root/.local/share/tts/tts_models--multilingual--multi-d
 SKIP_TRAIN_EPOCH = False
 
 # Set here the batch size to be used in training and evaluation
-BATCH_SIZE = 2
+BATCH_SIZE = 32
 
 # Training Sampling rate and the target sampling rate for resampling the downloaded dataset (Note: If you change this you might need to redownload the dataset !!)
 # Note: If you add new datasets, please make sure that the dataset sampling rate and this parameter are matching, otherwise resample your audios
@@ -52,10 +52,9 @@ VCTK_RESAMPLED_PATH = os.path.join(DATASET_BASE_DIR, "VCTK_24KHz")
 # Define the number of threads used during the audio resampling
 NUM_RESAMPLE_THREADS = 10
 # Check if VCTK dataset is not already downloaded, if not download it
-if not os.path.exists(VCTK_DOWNLOAD_PATH):
-    print(">>> Downloading VCTK dataset:")
-    download_vctk(VCTK_DOWNLOAD_PATH)
-    resample_files(VCTK_DOWNLOAD_PATH, SAMPLE_RATE, file_ext="flac", n_jobs=NUM_RESAMPLE_THREADS)
+# if os.path.exists(VCTK_DOWNLOAD_PATH):
+#     print(">>> Resampling VCTK dataset to {}KHz".format(SAMPLE_RATE / 1000))
+#     resample_files(VCTK_DOWNLOAD_PATH, SAMPLE_RATE, output_dir=VCTK_RESAMPLED_PATH, file_ext="flac", n_jobs=NUM_RESAMPLE_THREADS)
 
 # init configs
 vctk_config = BaseDatasetConfig(
@@ -64,6 +63,7 @@ vctk_config = BaseDatasetConfig(
     meta_file_train="",
     meta_file_val="",
     path=VCTK_DOWNLOAD_PATH,
+    # path=VCTK_RESAMPLED_PATH,
     language="en",
     ignored_speakers=[
         "p261",
@@ -103,10 +103,10 @@ model_args = VitsArgs(
     use_speaker_embedding=True,
     speaker_embedding_channels=256,
     use_sdp=False,
-    # use_prosody_embedding=True,
-    # embedded_prosody_dim=512,
-    use_prosody_embedding=False,
-    embedded_prosody_dim=0,
+    use_prosody_embedding=True,
+    embedded_prosody_dim=512,
+    # use_prosody_embedding=False,
+    # embedded_prosody_dim=0,
 )
 
 # General training config, here you can change the batch size and others useful parameters

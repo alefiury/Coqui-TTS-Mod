@@ -47,6 +47,9 @@ class DurationPredictor(nn.Module):
         if language_emb_dim != 0 and language_emb_dim is not None:
             self.cond_lang = nn.Conv1d(language_emb_dim, in_channels, 1)
 
+        if prosody_emb_dim != 0 and prosody_emb_dim is not None:
+            self.cond_prosody = nn.Conv1d(prosody_emb_dim, in_channels, 1)
+
     def forward(self, x, x_mask, g=None, lang_emb=None, prosody_emb=None):
         """
         Shapes:
@@ -61,7 +64,7 @@ class DurationPredictor(nn.Module):
             x = x + self.cond_lang(lang_emb)
 
         if prosody_emb is not None:
-            x = x + prosody_emb
+            x = x + self.cond_prosody(prosody_emb)
 
         x = self.conv_1(x * x_mask)
         x = torch.relu(x)

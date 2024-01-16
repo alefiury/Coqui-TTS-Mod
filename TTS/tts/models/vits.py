@@ -1436,6 +1436,8 @@ class Vits(BaseTTS):
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
                     syn_spk_emb=self.model_outputs_cache["syn_spk_emb"],
+                    prosody_mu=self.model_outputs_cache["prosody_mu"],
+                    prosody_logvar=self.model_outputs_cache["prosody_logvar"],
                 )
 
             return self.model_outputs_cache, loss_dict

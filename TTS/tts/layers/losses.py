@@ -678,6 +678,18 @@ class VitsGeneratorLoss(nn.Module):
         return l
 
     @staticmethod
+    def kl_prosody_loss(prosody_mu, prosody_logvar):
+        """
+        prosody_mu, prosody_logvar: [b, t_t]
+        """
+        prosody_mu = prosody_mu.float()
+        prosody_logvar = prosody_logvar.float()
+
+        kl_loss = -0.5 * torch.sum(1.0 + prosody_logvar - prosody_mu.pow(2) - prosody_logvar.exp())
+
+        return kl_loss
+
+    @staticmethod
     def cosine_similarity_loss(gt_spk_emb, syn_spk_emb):
         return -torch.nn.functional.cosine_similarity(gt_spk_emb, syn_spk_emb).mean()
 
@@ -697,6 +709,8 @@ class VitsGeneratorLoss(nn.Module):
         use_speaker_encoder_as_loss=False,
         gt_spk_emb=None,
         syn_spk_emb=None,
+        prosody_mu=None,
+        prosody_logvar=None,
     ):
         """
         Shapes:
@@ -725,7 +739,14 @@ class VitsGeneratorLoss(nn.Module):
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
         loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
+
         loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration
+
+        if prosody_mu is not None and prosody_logvar is not None:
+            loss_prosody_kl = self.kl_prosody_loss(prosody_mu=prosody_mu, prosody_logvar=prosody_logvar)
+
+            loss = loss + loss_prosody_kl * 0.001 # Hardcoded kl alpha for prosody
+            return_dict["loss_prosody_kl"] = loss_prosody_kl
 
         if use_speaker_encoder_as_loss:
             loss_se = self.cosine_similarity_loss(gt_spk_emb, syn_spk_emb) * self.spk_encoder_loss_alpha
