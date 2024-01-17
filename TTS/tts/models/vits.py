@@ -1213,11 +1213,6 @@ class Vits(BaseTTS):
             - logs_p: :math:`[B, C, T_dec]`
         """
         sid, g, lid, durations, spec = self._set_cond_input(aux_input)
-        print("*"*100)
-        print(spec.shape)
-        print(x.shape)
-        print(sid.shape)
-        print("*"*100)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
@@ -1537,8 +1532,6 @@ class Vits(BaseTTS):
             language_id = self.language_manager.name_to_id[language_name]
 
         if wav_path is not None:
-            print(self.config)
-
             wav, sr = load_audio(wav_path)
 
             if sr != self.config.audio["sample_rate"]:
