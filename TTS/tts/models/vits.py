@@ -1213,6 +1213,11 @@ class Vits(BaseTTS):
             - logs_p: :math:`[B, C, T_dec]`
         """
         sid, g, lid, durations, spec = self._set_cond_input(aux_input)
+        print("*"*100)
+        print(spec.shape)
+        print(x.shape)
+        print(sid.shape)
+        print("*"*100)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
@@ -1497,7 +1502,7 @@ class Vits(BaseTTS):
             config = self.config
 
         # extract speaker and language info
-        text, speaker_name, style_wav, language_name = None, None, None, None
+        text, speaker_name, style_wav, language_name, wav_path = None, None, None, None, None
 
         if isinstance(sentence_info, list):
             if len(sentence_info) == 1:
@@ -1508,6 +1513,8 @@ class Vits(BaseTTS):
                 text, speaker_name, style_wav = sentence_info
             elif len(sentence_info) == 4:
                 text, speaker_name, style_wav, language_name = sentence_info
+            elif len(sentence_info) == 5:
+                text, speaker_name, style_wav, language_name, wav_path = sentence_info
         else:
             text = sentence_info
 
@@ -1529,6 +1536,24 @@ class Vits(BaseTTS):
         if hasattr(self, "language_manager") and config.use_language_embedding and language_name is not None:
             language_id = self.language_manager.name_to_id[language_name]
 
+        if wav_path is not None:
+            print(self.config)
+
+            wav, sr = load_audio(wav_path)
+
+            if sr != self.config.audio["sample_rate"]:
+                transform = torchaudio.transforms.Resample(sr, self.config.audio["sample_rate"])
+                wav = transform(wav)
+                sr = self.config.audio["sample_rate"]
+
+            spec = wav_to_spec(
+                wav,
+                self.config.audio.fft_size,
+                self.config.audio.hop_length,
+                self.config.audio.win_length,
+                center=False,
+            )
+
         return {
             "text": text,
             "speaker_id": speaker_id,
@@ -1536,6 +1561,7 @@ class Vits(BaseTTS):
             "d_vector": d_vector,
             "language_id": language_id,
             "language_name": language_name,
+            "spec": spec,
         }
 
     @torch.no_grad()
@@ -1562,6 +1588,7 @@ class Vits(BaseTTS):
                 d_vector=aux_inputs["d_vector"],
                 style_wav=aux_inputs["style_wav"],
                 language_id=aux_inputs["language_id"],
+                spec=aux_inputs["spec"],
                 use_griffin_lim=True,
                 do_trim_silence=False,
             ).values()

@@ -32,6 +32,7 @@ def run_model_torch(
     style_text: str = None,
     d_vector: torch.Tensor = None,
     language_id: torch.Tensor = None,
+    spec: torch.Tensor = None,
 ) -> Dict:
     """Run a torch model for inference. It does not support batch inference.
 
@@ -59,6 +60,7 @@ def run_model_torch(
             "style_mel": style_mel,
             "style_text": style_text,
             "language_ids": language_id,
+            "spec": spec,
         },
     )
     return outputs
@@ -125,6 +127,7 @@ def synthesis(
     do_trim_silence=False,
     d_vector=None,
     language_id=None,
+    spec=None,
 ):
     """Synthesize voice for the given text using Griffin-Lim vocoder or just compute output features to be passed to
     the vocoder model.
@@ -217,6 +220,9 @@ def synthesis(
 
     text_inputs = numpy_to_torch(text_inputs, torch.long, device=device)
     text_inputs = text_inputs.unsqueeze(0)
+
+    spec = spec.to(device)
+
     # synthesize voice
     outputs = run_model_torch(
         model,
@@ -226,6 +232,7 @@ def synthesis(
         style_text,
         d_vector=d_vector,
         language_id=language_id,
+        spec=spec,
     )
     model_outputs = outputs["model_outputs"]
     model_outputs = model_outputs[0].data.cpu().numpy()
