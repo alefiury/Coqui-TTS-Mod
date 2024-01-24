@@ -25,9 +25,6 @@ class DurationPredictor(nn.Module):
         if language_emb_dim:
             in_channels += language_emb_dim
 
-        if prosody_emb_dim:
-            in_channels += prosody_emb_dim
-
         # class arguments
         self.in_channels = in_channels
         self.filter_channels = hidden_channels

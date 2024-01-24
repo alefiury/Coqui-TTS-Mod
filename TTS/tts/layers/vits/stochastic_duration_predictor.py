@@ -194,9 +194,6 @@ class StochasticDurationPredictor(nn.Module):
         if language_emb_dim:
             in_channels += language_emb_dim
 
-        if prosody_emb_dim:
-            in_channels += prosody_emb_dim
-
         # condition encoder text
         self.pre = nn.Conv1d(in_channels, hidden_channels, 1)
         self.convs = DilatedDepthSeparableConv(hidden_channels, kernel_size, num_layers=3, dropout_p=dropout_p)

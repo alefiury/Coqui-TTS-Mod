@@ -63,9 +63,6 @@ class TextEncoder(nn.Module):
         if language_emb_dim:
             hidden_channels += language_emb_dim
 
-        if prosody_emb_dim:
-            hidden_channels += prosody_emb_dim
-
         self.encoder = RelativePositionTransformer(
             in_channels=hidden_channels,
             out_channels=hidden_channels,
@@ -81,6 +78,9 @@ class TextEncoder(nn.Module):
 
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
+        if prosody_emb_dim != 0 and prosody_emb_dim is not None:
+            self.cond_prosody = nn.Conv1d(prosody_emb_dim, hidden_channels, 1)
+
     def forward(self, x, x_lengths, lang_emb=None, prosody_emb=None):
         """
         Shapes:
@@ -94,9 +94,9 @@ class TextEncoder(nn.Module):
         if lang_emb is not None:
             x = torch.cat((x, lang_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
 
-        # concat the prosody emb in embedding chars
         if prosody_emb is not None:
-            x = torch.cat((x, prosody_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
+            prosody_emb = self.cond_prosody(prosody_emb)
+            x = x + prosody_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)
 
         x = torch.transpose(x, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [b, 1, t]
