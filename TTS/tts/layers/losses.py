@@ -725,6 +725,27 @@ class VitsGeneratorLoss(nn.Module):
             - feats_disc_fake[i][j]: :math:`[B, C, T', P]`
             - feats_disc_real[i][j]: :math:`[B, C, T', P]`
         """
+        # Check if any of the input has NaN
+        for e, tensor in enumerate([mel_slice, mel_slice_hat, z_p, logs_q, m_p, logs_p]):
+            if torch.isnan(tensor).any():
+                print(f" [!] NaN tensor detected in {e}")
+
+        # for tensor in [scores_disc_fake, feats_disc_fake, feats_disc_real]:
+        #     if torch.isnan(tensor).any():
+        #         print(f" [!] NaN tensor detected in {tensor}")
+
+        # for tensor in [loss_duration, z_len]:
+        #     if torch.isnan(tensor).any():
+        #         print(f" [!] NaN tensor detected in {tensor}")
+
+        # for tensor in [gt_spk_emb, syn_spk_emb]:
+        #     if tensor is not None and torch.isnan(tensor).any():
+        #         print(f" [!] NaN tensor detected in {tensor}")
+
+        # for tensor in [prosody_mu, prosody_logvar]:
+        #     if tensor is not None and torch.isnan(tensor).any():
+        #         print(f" [!] NaN tensor detected in {tensor}")
+
         loss = 0.0
         return_dict = {}
         z_mask = sequence_mask(z_len).float()
@@ -759,6 +780,13 @@ class VitsGeneratorLoss(nn.Module):
         return_dict["loss_mel"] = loss_mel
         return_dict["loss_duration"] = loss_duration
         return_dict["loss"] = loss
+
+        # Check if any loss is NaN
+        for key, loss in return_dict.items():
+            if torch.isnan(loss):
+                print(f" [!] NaN loss with {key}. Setting it to 0.0")
+                return_dict[key] = torch.tensor(0.0, device=loss.device)
+
         return return_dict
 
 

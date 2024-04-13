@@ -47,6 +47,24 @@ hann_window = {}
 mel_basis = {}
 
 
+def initialize_weights(m):
+    if isinstance(m, nn.Conv1d):
+        nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+    elif isinstance(m, nn.LSTM):
+        for name, param in m.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param.data)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param.data)
+            elif 'bias' in name:
+                param.data.fill_(0)
+    elif isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        nn.init.constant_(m.bias, 0)
+
+
 @torch.no_grad()
 def weights_reset(m: nn.Module):
     # check if the current module has reset_parameters and if it is reset the weight
@@ -743,11 +761,15 @@ class Vits(BaseTTS):
             prosody_emb_dim=self.embedded_prosody_dim,
         )
 
-        self.prosody_encoder = ProsodyEncoder(
-            conv_filters=[self.args.out_channels, 512, 512, 512, 512],
-            lstm_units=512,
-            z_dim=self.embedded_prosody_dim,
-        )
+        if self.args.use_prosody_embedding:
+            self.prosody_encoder = ProsodyEncoder(
+                conv_filters=[self.args.out_channels, 512, 512, 512, 512],
+                lstm_units=512,
+                z_dim=self.embedded_prosody_dim,
+            )
+
+            # initialize the weights of the prosody encoder
+            self.prosody_encoder.apply(initialize_weights)
 
         self.posterior_encoder = PosteriorEncoder(
             self.args.out_channels,
@@ -1099,8 +1121,24 @@ class Vits(BaseTTS):
             - gt_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
             - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
+        # Check if any of the inputs have Nan values
+        if torch.isnan(x).any() or torch.isnan(y).any() or torch.isnan(waveform).any():
+            print(" [!] Input tensor has NaN values.")
+
         outputs = {}
         sid, g, lid, _, _ = self._set_cond_input(aux_input)
+
+        # check if is nan sid, g, lid
+        if sid is not None and torch.isnan(sid).any():
+            print(" [!] Speaker ID tensor has NaN values.")
+
+        if g is not None and torch.isnan(g).any():
+            print(" [!] Speaker embedding tensor has NaN values.")
+
+        if lid is not None and torch.isnan(lid).any():
+            print(" [!] Language ID tensor has NaN values.")
+
+
         # speaker embedding
         if self.args.use_speaker_embedding and sid is not None:
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
@@ -1224,6 +1262,7 @@ class Vits(BaseTTS):
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
+        prosody_emb = None
         if self.args.use_prosody_embedding:
             prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(spec)
             prosody_emb = prosody_emb.unsqueeze(-1)
@@ -1559,32 +1598,113 @@ class Vits(BaseTTS):
 
     @torch.no_grad()
     def test_run(self, assets) -> Tuple[Dict, Dict]:
-        """Generic test run for `tts` models used by `Trainer`.
+        def load_audio(file_path):
+            """Load the audio file normalized in [-1, 1]
 
-        You can override this for a different behaviour.
+            Return Shapes:
+                - x: :math:`[1, T]`
+            """
+            x, sr = torchaudio.load(file_path)
+            assert (x > 1).sum() + (x < -1).sum() == 0
+            return x, sr
 
-        Returns:
-            Tuple[Dict, Dict]: Test figures and audios to be projected to Tensorboard.
-        """
+        def id_to_torch(aux_id, cuda=False, device="cpu"):
+            if cuda:
+                device = "cuda"
+            if aux_id is not None:
+                aux_id = np.asarray(aux_id)
+                aux_id = torch.from_numpy(aux_id).to(device)
+            return aux_id
+
+        def numpy_to_torch(np_array, dtype, cuda=False, device="cpu"):
+            if cuda:
+                device = "cuda"
+            if np_array is None:
+                return None
+            tensor = torch.as_tensor(np_array, dtype=dtype, device=device)
+            return tensor
+
+        def embedding_to_torch(d_vector, cuda=False, device="cpu"):
+            if cuda:
+                device = "cuda"
+            if d_vector is not None:
+                d_vector = np.asarray(d_vector)
+                d_vector = torch.from_numpy(d_vector).type(torch.FloatTensor)
+                d_vector = d_vector.squeeze().unsqueeze(0).to(device)
+            return d_vector
+
+        def inference(ref_wav_path, text, language_id=None, device="cuda"):
+            d_vector = self.speaker_manager.compute_embedding_from_clip(ref_wav_path)
+            wav, sr = load_audio(ref_wav_path)
+            if sr != self.config.audio["sample_rate"]:
+                transform = torchaudio.transforms.Resample(sr, self.config.audio["sample_rate"])
+                wav = transform(wav)
+                sr = self.config.audio["sample_rate"]
+            spec = wav_to_spec(
+                wav,
+                self.config.audio.fft_size,
+                self.config.audio.hop_length,
+                self.config.audio.win_length,
+                center=False,
+            )
+
+            spec = torch.tensor(spec, dtype=torch.float32, device=device)
+
+            language_id = self.language_manager.name_to_id.get(language_id, None)
+
+            language_name = None
+            if language_id is not None:
+                language = [k for k, v in self.language_manager.name_to_id.items() if v == language_id]
+                assert len(language) == 1, "language_id must be a valid language"
+                language_name = language[0]
+
+            text_inputs = np.asarray(
+                self.tokenizer.text_to_ids(text, language=language_name),
+                dtype=np.int32,
+            )
+
+            text_inputs = numpy_to_torch(text_inputs, torch.long, device=device)
+            text_inputs = text_inputs.unsqueeze(0)
+
+            d_vectors = embedding_to_torch(d_vector, device=device)
+
+            if language_id is not None:
+                language_id = id_to_torch(language_id, device=device)
+
+            out = self.inference(
+                text_inputs,
+                aux_input={
+                    "x_lengths": None,
+                    "d_vectors": d_vectors,
+                    "speaker_ids": None,
+                    "language_ids": language_id,
+                    "durations": None,
+                    "spec": spec
+                },
+            )
+
+            return out["model_outputs"], out["alignments"]
+
         print(" | > Synthesizing test sentences.")
         test_audios = {}
         test_figures = {}
         test_sentences = self.config.test_sentences
         for idx, s_info in enumerate(test_sentences):
-            aux_inputs = self.get_aux_input_from_test_sentences(s_info)
-            wav, alignment, _, _ = synthesis(
-                self,
-                aux_inputs["text"],
-                self.config,
-                "cuda" in str(next(self.parameters()).device),
-                speaker_id=aux_inputs["speaker_id"],
-                d_vector=aux_inputs["d_vector"],
-                style_wav=aux_inputs["style_wav"],
-                language_id=aux_inputs["language_id"],
-                spec=aux_inputs["spec"],
-                use_griffin_lim=True,
-                do_trim_silence=False,
-            ).values()
+            if isinstance(s_info, list):
+                if len(s_info) == 1:
+                    text = s_info[0]
+                elif len(s_info) == 2:
+                    text, speaker_name = s_info
+                elif len(s_info) == 3:
+                    text, speaker_name, style_wav = s_info
+                elif len(s_info) == 4:
+                    text, speaker_name, style_wav, language_name = s_info
+                elif len(s_info) == 5:
+                    text, speaker_name, style_wav, language_name, wav_path = s_info
+
+            wav, alignment = inference(wav_path, text, language_name)
+            wav = wav.squeeze(0).cpu().numpy()
+
             test_audios["{}-audio".format(idx)] = wav
             test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.T, output_fig=False)
         return {"figures": test_figures, "audios": test_audios}

@@ -8,6 +8,15 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+input_audios/
+output/
+output_570000/
+datasets/
+checkpoints/
+input.zip
+VIPT-CML-*/
+VIPT-VCTK-*/
+
 # C extensions
 *.so
 
