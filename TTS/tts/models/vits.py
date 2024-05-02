@@ -622,11 +622,12 @@ class VitsArgs(Coqpit):
 
 class ProsodyEncoder(nn.Module):
     def __init__(
-            self,
-            conv_filters: List[int] = [512, 512, 512, 512, 512],
-            lstm_units: int = 512,
-            z_dim: int = 512,
-        ):
+        self,
+        conv_filters: List[int] = [512, 512, 512, 512, 512],
+        lstm_units: int = 512,
+        z_dim: int = 512,
+        n_bands: int = 20,
+    ):
         """
         Initializes the ProsodyReferenceEncoder module.
 
@@ -650,6 +651,8 @@ class ProsodyEncoder(nn.Module):
         # Fully connected layers for mean and log variance
         self.fc_mu = nn.Linear(2 * lstm_units, z_dim)
         self.fc_logvar = nn.Linear(2 * lstm_units, z_dim)
+
+        self.n_bands = n_bands
 
     def reparametrize(self, mu, logvar):
         """
@@ -676,6 +679,9 @@ class ProsodyEncoder(nn.Module):
         Returns:
             Tuple[Tensor, Tensor]: Mean and log variance of the latent prosody space.
         """
+        # The input is a mel spectrogram, take only the first self.n_bands, considering a batch of any size
+        x = x[:, :self.n_bands]
+
         # Pass through convolutional layers with ReLU activations
         for conv in self.conv_layers:
             x = F.relu(conv(x))
@@ -953,8 +959,8 @@ class Vits(BaseTTS):
             print(" > Text Encoder was reinit.")
 
     def get_aux_input(self, aux_input: Dict):
-        sid, g, lid, _ = self._set_cond_input(aux_input)
-        return {"speaker_ids": sid, "style_wav": None, "d_vectors": g, "language_ids": lid}
+        sid, g, lid, _, _, mel = self._set_cond_input(aux_input)
+        return {"speaker_ids": sid, "style_wav": None, "d_vectors": g, "language_ids": lid, "mel": mel}
 
     def _freeze_layers(self):
         if self.args.freeze_encoder:
@@ -1006,7 +1012,11 @@ class Vits(BaseTTS):
         if "spec" in aux_input and aux_input["spec"] is not None:
             spec = aux_input["spec"]
 
-        return sid, g, lid, durations, spec
+        mel = None
+        if "mel" in aux_input and aux_input["mel"] is not None:
+            mel = aux_input["mel"]
+
+        return sid, g, lid, durations, spec, mel
 
     def _set_speaker_input(self, aux_input: Dict):
         d_vectors = aux_input.get("d_vectors", None)
@@ -1082,7 +1092,7 @@ class Vits(BaseTTS):
         y: torch.tensor,
         y_lengths: torch.tensor,
         waveform: torch.tensor,
-        aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None},
+        aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None, "mel": None},
     ) -> Dict:
         """Forward pass of the model.
 
@@ -1126,7 +1136,7 @@ class Vits(BaseTTS):
             print(" [!] Input tensor has NaN values.")
 
         outputs = {}
-        sid, g, lid, _, _ = self._set_cond_input(aux_input)
+        sid, g, lid, _, _, mel = self._set_cond_input(aux_input)
 
         # check if is nan sid, g, lid
         if sid is not None and torch.isnan(sid).any():
@@ -1230,7 +1240,7 @@ class Vits(BaseTTS):
     def inference(
         self,
         x,
-        aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None, "spec": None},
+        aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None, "spec": None, "mel": None},
     ):  # pylint: disable=dangerous-default-value
         """
         Note:
@@ -1250,7 +1260,7 @@ class Vits(BaseTTS):
             - m_p: :math:`[B, C, T_dec]`
             - logs_p: :math:`[B, C, T_dec]`
         """
-        sid, g, lid, durations, spec = self._set_cond_input(aux_input)
+        sid, g, lid, durations, spec, mel = self._set_cond_input(aux_input)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
@@ -1396,6 +1406,7 @@ class Vits(BaseTTS):
             tokens = batch["tokens"]
             token_lenghts = batch["token_lens"]
             spec = batch["spec"]
+            mel = batch["mel"]
 
             d_vectors = batch["d_vectors"]
             speaker_ids = batch["speaker_ids"]
@@ -1409,7 +1420,12 @@ class Vits(BaseTTS):
                 spec,
                 spec_lens,
                 waveform,
-                aux_input={"d_vectors": d_vectors, "speaker_ids": speaker_ids, "language_ids": language_ids},
+                aux_input={
+                    "d_vectors": d_vectors,
+                    "speaker_ids": speaker_ids,
+                    "language_ids": language_ids,
+                    "mel": mel,
+                },
             )
 
             # cache tensors for the generator pass
