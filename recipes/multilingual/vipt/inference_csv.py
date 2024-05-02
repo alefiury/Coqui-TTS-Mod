@@ -3,6 +3,8 @@ import json
 import torchaudio
 import numpy as np
 import torch
+from tqdm import tqdm
+import shutil
 import pandas as pd
 
 from TTS.tts.configs.vits_config import VitsConfig
@@ -107,86 +109,72 @@ def inference(model, ref_wav, text, language_id=None, device="cuda"):
 
 
 def main():
-    CONFIG_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-April-06-2024_04+52PM-0000000/config.json"
-    CHECKPOINT_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-April-06-2024_04+52PM-0000000/checkpoint_570000.pth"
-    LANGUAGE_ID_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-April-06-2024_04+52PM-0000000/language_ids.json"
-    CML_DATASET_PATH = "/hadatasets/alef.ferreira/svc/data/cml/cml_2"
-    ref_wav = os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
+    # CONFIG_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-April-23-2024_08+10PM-3a7f2229/config.json"
+    # CHECKPOINT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-April-23-2024_08+10PM-3a7f2229/checkpoint_560000.pth"
+    # LANGUAGE_ID_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-April-23-2024_08+10PM-3a7f2229/language_ids.json"
+    # ALC_DATASET_PATH = "/raid/fred/DATASETS/dataset_alc_new_24khz"
+    # OUTPUT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/output_alc"
 
-    base_audio_path = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/alcateia_audios/wavs"
-    csv_path = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/alcateia_audios/transcription_all.csv"
-    output_base_dir = "output_570000"
+    CONFIG_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/config.json"
+    CHECKPOINT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/best_model.pth"
+    LANGUAGE_ID_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/language_ids.json"
+    ALC_DATASET_PATH = "/raid/fred/DATASETS/dataset_alc_new_24khz"
+    OUTPUT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/output_alc_cml"
 
-    df = pd.read_csv(csv_path)
+    TEST_METADATA_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/test_metadata_complete.csv"
+
+    with open(LANGUAGE_ID_PATH, "r") as f:
+        language_ids = json.load(f)
+
+    df = pd.read_csv(TEST_METADATA_PATH, header=None, names=["filename", "transcription", "transcription_en"], sep="|")
     test_sentences = []
 
     for row in df.iterrows():
         filename = row[1]["filename"]
         pt_transcription = row[1]["transcription"]
         en_transcription = row[1]["transcription_en"]
-        sp_transcription = row[1]["transcription_sp"]
-        ge_transcription = row[1]["transcription_german"]
-        fr_transcription = row[1]["transcription_fr"]
 
         test_sentences.append(
-            [
-                pt_transcription,
-                "pt-br",
-                os.path.join(base_audio_path, filename),
-                os.path.join(output_base_dir, filename.replace(".wav", "_pt-br.wav"))
-            ]
+                [
+                    pt_transcription,
+                    "pt-br",
+                    os.path.join(ALC_DATASET_PATH, filename),
+                ]
         )
 
         test_sentences.append(
             [
                 en_transcription,
                 "en",
-                os.path.join(base_audio_path, filename),
-                os.path.join(output_base_dir, filename.replace(".wav", "_en.wav"))
+                os.path.join(ALC_DATASET_PATH, filename),
             ]
         )
-
-        test_sentences.append(
-            [
-                sp_transcription,
-                "sp",
-                os.path.join(base_audio_path, filename),
-                os.path.join(output_base_dir, filename.replace(".wav", "_sp.wav"))
-            ]
-        )
-
-        test_sentences.append(
-            [
-                ge_transcription,
-                "ge",
-                os.path.join(base_audio_path, filename),
-                os.path.join(output_base_dir, filename.replace(".wav", "_ge.wav"))
-            ]
-        )
-
-        test_sentences.append(
-            [
-                fr_transcription,
-                "fr",
-                os.path.join(base_audio_path, filename),
-                os.path.join(output_base_dir, filename.replace(".wav", "_fr.wav"))
-            ]
-        )
-
-    print(test_sentences)
 
     config = VitsConfig()
     config.load_json(CONFIG_PATH)
+    # print(config["d_vector_file"] )
+    config["d_vector_file"] = None # Remove speakers_file from config
+    config["speakers_file"] = None
+    # print(config["model_args"])
+    config["model_args"]["speakers_file"] = None
+    config["model_args"]["d_vector_file"] = None
+    config["model_args"]["language_ids_file"] = LANGUAGE_ID_PATH
+    config["language_ids_file"] = LANGUAGE_ID_PATH
+    print(config["model_args"]["speakers_file"])
+    print(config["model_args"]["d_vector_file"])
+    # exit()
     model = Vits.init_from_config(config)
     model.load_checkpoint(config, checkpoint_path=CHECKPOINT_PATH, eval=True)
     model.cuda()
 
-    for test_sentence in test_sentences:
-        sentence, langid, ref_wav, output_path = test_sentence
+    for test_sentence in tqdm(test_sentences):
+        sentence, langid, ref_wav = test_sentence
         wav = inference(model, ref_wav, sentence, langid)
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        torchaudio.save(output_path, wav.squeeze(0).cpu(), 24000)
-
+        sub_dir = os.path.basename(ref_wav).replace(".wav", "")
+        OUTPUT_PATH_EXT = os.path.join(OUTPUT_PATH, sub_dir)
+        os.makedirs(OUTPUT_PATH_EXT, exist_ok=True)
+        shutil.copy2(ref_wav, os.path.join(OUTPUT_PATH_EXT, "ref.wav"))
+        torchaudio.save(os.path.join(OUTPUT_PATH_EXT, f"{langid}-{os.path.basename(CHECKPOINT_PATH).replace('.pth', '').replace('checkpoint_', '')}.wav"), wav.squeeze(0).cpu(), 24000)
 
 
 if __name__ == "__main__":

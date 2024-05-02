@@ -3,6 +3,8 @@ import json
 import torchaudio
 import numpy as np
 import torch
+from tqdm import tqdm
+import shutil
 
 from TTS.tts.configs.vits_config import VitsConfig
 from TTS.tts.models.vits import Vits, wav_to_spec
@@ -106,35 +108,37 @@ def inference(model, ref_wav, text, language_id=None, device="cuda"):
 
 
 def main():
-    CONFIG_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-April-01-2024_04+16PM-0000000/config.json"
-    CHECKPOINT_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-April-01-2024_04+16PM-0000000/checkpoint_250000.pth"
-    LANGUAGE_ID_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-April-01-2024_04+16PM-0000000/language_ids.json"
-    CML_DATASET_PATH = "/hadatasets/alef.ferreira/svc/data/cml/cml_2"
-    ref_wav = os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
+    CONFIG_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-April-23-2024_08+10PM-3a7f2229/config.json"
+    CHECKPOINT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-April-23-2024_08+10PM-3a7f2229/checkpoint_560000.pth"
+    LANGUAGE_ID_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-April-23-2024_08+10PM-3a7f2229/language_ids.json"
+    ALC_DATASET_PATH = "/raid/fred/DATASETS/dataset_alc_new_24khz"
+    OUTPUT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/output_alc"
+
+    TEST_METADATA_PATH = "/raid/fred/DATASETS/dataset_alc_new_24khz/test_metadata.csv"
 
     with open(LANGUAGE_ID_PATH, "r") as f:
         language_ids = json.load(f)
 
     test_sentences=[
         [
-            "E o sol, quando aparece, Já o encontra, robusto e manso, a trabalhar. Forte e meigo animal! Que bondade serena Tem na doce expressão da face resignada.",
+            "Cuidado! Só estamos invadindo um navio pirata pra achar uma ovelha. Não se preocupa! Essa não.",
             "pt-br",
-            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
+            os.path.join(ALC_DATASET_PATH, "d750d6/100/2f22ed5224.wav")
         ],
         [
-            "And the sun, when it appears, Already finds him, robust and gentle, at work. Strong and tender animal! What serene kindness Lies in the sweet expression of the resigned face.",
+            "Careful! We're just raiding a pirate ship to find a sheep. Do not worry! Not this one.",
             "en",
-            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
+            os.path.join(ALC_DATASET_PATH, "d750d6/100/2f22ed5224.wav")
         ],
         [
-            "Y el sol, cuando aparece, ya lo encuentra, robusto y gentil, en el trabajo. ¡Animal fuerte y tierno! Qué serena bondad reside en la dulce expresión del rostro resignado.",
-            "sp",
-            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
+            "A partir de então, o sonho se repetia toda noite. Ela sonhava no avião, indo para Calcutá e acordava gritando.",
+            "pt-br",
+            os.path.join(ALC_DATASET_PATH, "ee23b4/100/ae5311b74d.wav")
         ],
         [
-            "Et le soleil, quand il apparaît, Le trouve déjà, robuste et doux, à l'œuvre. Animal fort et tendre ! Quelle bonté sereine réside dans la douce expression du visage résigné.",
-            "fr",
-            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
+            "From then on, the dream repeated itself every night. She would dream on the plane, going to Calcutta and wake up screaming.",
+            "en",
+            os.path.join(ALC_DATASET_PATH, "ee23b4/100/ae5311b74d.wav")
         ],
     ]
 
@@ -144,11 +148,14 @@ def main():
     model.load_checkpoint(config, checkpoint_path=CHECKPOINT_PATH, eval=True)
     model.cuda()
 
-    for test_sentence in test_sentences:
+    for test_sentence in tqdm(test_sentences):
         sentence, langid, ref_wav = test_sentence
         wav = inference(model, ref_wav, sentence, langid)
-        torchaudio.save(f"output_{langid}-{os.path.basename(CHECKPOINT_PATH).replace(".pth", "").replace("checkpoint_", "")}.wav", wav.squeeze(0).cpu(), 24000)
-
+        sub_dir = os.path.basename(ref_wav).replace(".wav", "")
+        OUTPUT_PATH_EXT = os.path.join(OUTPUT_PATH, sub_dir)
+        os.makedirs(OUTPUT_PATH_EXT, exist_ok=True)
+        shutil.copy2(ref_wav, os.path.join(OUTPUT_PATH_EXT, "ref.wav"))
+        torchaudio.save(os.path.join(OUTPUT_PATH_EXT, f"{langid}-{os.path.basename(CHECKPOINT_PATH).replace('.pth', '').replace('checkpoint_', '')}.wav"), wav.squeeze(0).cpu(), 24000)
 
 
 if __name__ == "__main__":

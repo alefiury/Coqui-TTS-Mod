@@ -96,7 +96,10 @@ class TextEncoder(nn.Module):
 
         if prosody_emb is not None:
             prosody_emb = self.cond_prosody(prosody_emb)
-            x = x + prosody_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)
+            prosody_emb = prosody_emb.transpose(2, 1)
+            prosody_emb = prosody_emb.expand(x.size(0), x.size(1), -1)
+            # x = x + prosody_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)
+            x = x + prosody_emb
 
         x = torch.transpose(x, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [b, 1, t]

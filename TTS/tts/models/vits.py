@@ -1648,7 +1648,10 @@ class Vits(BaseTTS):
                 center=False,
             )
 
-            spec = torch.tensor(spec, dtype=torch.float32, device=device)
+            if not isinstance(spec, torch.Tensor):
+                spec = torch.tensor(spec, dtype=torch.float32, device=device)
+
+            spec = spec.to(device)
 
             language_id = self.language_manager.name_to_id.get(language_id, None)
 
@@ -1690,6 +1693,8 @@ class Vits(BaseTTS):
         test_figures = {}
         test_sentences = self.config.test_sentences
         for idx, s_info in enumerate(test_sentences):
+            print("%"*100)
+            print(idx)
             if isinstance(s_info, list):
                 if len(s_info) == 1:
                     text = s_info[0]
@@ -1706,7 +1711,7 @@ class Vits(BaseTTS):
             wav = wav.squeeze(0).cpu().numpy()
 
             test_audios["{}-audio".format(idx)] = wav
-            test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.T, output_fig=False)
+            test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.mT, output_fig=False)
         return {"figures": test_figures, "audios": test_audios}
 
     def test_log(

@@ -8,14 +8,22 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+normalize_text/
+dataset_metadata/
 input_audios/
 output/
 output_570000/
-datasets/
+datasets_audios/
 checkpoints/
 input.zip
 VIPT-CML-*/
 VIPT-VCTK-*/
+VIPT-ALC-April-*/
+output_alc/
+output_alc_cml/
+short_audios.txt
+test_metadata_complete.csv
+*.wav
 
 # C extensions
 *.so
