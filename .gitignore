@@ -7,7 +7,8 @@ WadaSNR/
 __pycache__/
 *.py[cod]
 *$py.class
-
+sim/
+LibriTTS/
 normalize_text/
 dataset_metadata/
 input_audios/
@@ -23,6 +24,7 @@ output_alc/
 output_alc_cml/
 short_audios.txt
 test_metadata_complete.csv
+train_sim.csv
 *.wav
 
 # C extensions

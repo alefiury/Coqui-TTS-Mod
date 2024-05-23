@@ -12,48 +12,7 @@ from TTS.config.shared_configs import BaseDatasetConfig
 from TTS.tts.configs.vits_config import VitsConfig
 from TTS.tts.datasets import load_tts_samples
 from TTS.tts.models.vits import CharactersConfig, Vits, VitsArgs, VitsAudioConfig
-from TTS.utils.download import download_kaggle_dataset, download_url, extract_archive
-
-
-def download_libri_tts_r(path: str, subset: Optional[str] = "all"):
-    """Download and extract libri tts dataset.
-
-    Args:
-        path (str): Path to the directory where the dataset will be stored.
-
-        subset (str, optional): Name of the subset to download. If you only want to download a certain
-        portion specify it here. Defaults to 'all'.
-    """
-
-    subset_dict = {
-        "libri-tts-clean-100": "http://www.openslr.org/resources/141/train-clean-100.tar.gz",
-        "libri-tts-clean-360": "https://openslr.elda.org/resources/141/train_clean_360.tar.gz",
-        "libri-tts-other-500": "http://www.openslr.org/resources/141/train-other-500.tar.gz",
-        "libri-tts-dev-clean": "http://www.openslr.org/resources/141/dev-clean.tar.gz",
-        "libri-tts-dev-other": "http://www.openslr.org/resources/141/dev-other.tar.gz",
-        "libri-tts-test-clean": "http://www.openslr.org/resources/141/test-clean.tar.gz",
-        "libri-tts-test-other": "http://www.openslr.org/resources/141/test-other.tar.gz",
-    }
-
-    os.makedirs(path, exist_ok=True)
-    if subset == "all":
-        for sub, val in subset_dict.items():
-            print(f" > Downloading {sub}...")
-            download_url(val, path)
-            basename = os.path.basename(val)
-            archive = os.path.join(path, basename)
-            print(" > Extracting archive file...")
-            extract_archive(archive)
-        print(" > All subsets downloaded")
-    else:
-        url = subset_dict[subset]
-        download_url(url, path)
-        basename = os.path.basename(url)
-        archive = os.path.join(path, basename)
-        print(" > Extracting archive file...")
-        extract_archive(archive)
-
-
+from TTS.utils.downloaders import download_libri_tts
 
 torch.set_num_threads(16)
 
@@ -64,46 +23,47 @@ run = wandb.init(
 )
 
 # Change run name to facilitate train statistics traceability
-wandb.run.name = "VIPT-ALC"
+wandb.run.name = "VIPT-CML"
 wandb.run.save()
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 # Name of the run for the Trainer
-RUN_NAME = "VIPT-ALC"
+RUN_NAME = "VIPT-CML"
 
 # Path where you want to save the models outputs (configs, checkpoints and tensorboard logs)
 OUT_PATH = os.path.dirname(os.path.abspath(__file__))  # "/raid/coqui/Checkpoints/original-YourTTS/"
 
-RESTORE_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-May-09-2024_03+25PM-0000000/checkpoint_1165000.pth"
+RESTORE_PATH = "/hadatasets/alef.ferreira/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/best_model.pth"
 
 # This paramter is useful to debug, it skips the training epochs and just do the evaluation  and produce the test sentences
 # SKIP_TRAIN_EPOCH = True
 SKIP_TRAIN_EPOCH = False
 
 # Set here the batch size to be used in training and evaluation
-BATCH_SIZE = 6
+BATCH_SIZE = 16
 
 # Training Sampling rate and the target sampling rate for resampling the downloaded dataset (Note: If you change this you might need to redownload the dataset !!)
 # Note: If you add new datasets, please make sure that the dataset sampling rate and this parameter are matching, otherwise resample your audios
 SAMPLE_RATE = 24000
 
 # Max audio length in seconds to be used in training (every audio bigger than it will be ignored)
-MAX_AUDIO_LEN_IN_SECONDS = 15
+MAX_AUDIO_LEN_IN_SECONDS = float("inf")
 
 ### Download CML-TTS dataset
 # You need to download the dataset for all languages manually and extract it to a path and then set the ALC_DATASET_PATH to this path: https://github.com/freds0/CML-TTS-Dataset#download
-ALC_DATASET_PATH = "/raid/fred/DATASETS"
+CML_DATASET_PATH = "/hadatasets/alef.ferreira/svc/data/cml/cml_2"
 
-LIBRITTS_DOWNLOAD_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/datasets/LibriTTS_R"
+LIBRITTS_DOWNLOAD_PATH = "./datasets/LibriTTS/LibriTTS/"
 # Check if LibriTTS dataset is not already downloaded, if not download it
 if not os.path.exists(LIBRITTS_DOWNLOAD_PATH):
     print(">>> Downloading LibriTTS dataset:")
-    download_libri_tts_r(LIBRITTS_DOWNLOAD_PATH, subset="libri-tts-clean-360")
+    download_libri_tts(LIBRITTS_DOWNLOAD_PATH, subset="libri-tts-clean-360")
 
+# init LibriTTS configs
 libritts_config = BaseDatasetConfig(
-    formatter="libri_tts_r",
-    dataset_name="libri_tts_r",
+    formatter="libri_tts",
+    dataset_name="libri_tts",
     meta_file_train="",
     meta_file_val="",
     path=os.path.join(LIBRITTS_DOWNLOAD_PATH, "train-clean-360"),
@@ -112,23 +72,86 @@ libritts_config = BaseDatasetConfig(
 
 # init CML-TTS configs
 pt_config = BaseDatasetConfig(
-    formatter="alc_tts",
-    dataset_name="alc_tts",
-    meta_file_train="train_metadata.csv",
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
     meta_file_val="",
-    path=os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz"),
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1/"),
     language="pt-br",
 )
 
+pl_config = BaseDatasetConfig(
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
+    meta_file_val="",
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_polish_v0.1/"),
+    language="pl",
+)
+
+it_config = BaseDatasetConfig(
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
+    meta_file_val="",
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_italian_v0.1/"),
+    language="it",
+)
+
+fr_config = BaseDatasetConfig(
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
+    meta_file_val="",
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1/"),
+    language="fr",
+)
+
+du_config = BaseDatasetConfig(
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
+    meta_file_val="",
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_dutch_v0.1/"),
+    language="du",
+)
+
+ge_config = BaseDatasetConfig(
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
+    meta_file_val="",
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_german_v0.1/"),
+    language="ge",
+)
+
+sp_config = BaseDatasetConfig(
+    formatter="cml_tts",
+    dataset_name="cml_tts",
+    meta_file_train="train.csv",
+    meta_file_val="",
+    path=os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1/"),
+    language="sp",
+)
+
 # Add here all datasets configs Note: If you want to add new datasets, just add them here and it will automatically compute the speaker embeddings (d-vectors) for this new dataset :)
-DATASETS_CONFIG_LIST = [libritts_config, pt_config]
+DATASETS_CONFIG_LIST = [libritts_config, pt_config, pl_config, it_config, fr_config, du_config, ge_config, sp_config]
+# DATASETS_CONFIG_LIST = [libritts_config]
+
+# DATASETS_CONFIG_LIST = [pl_config]
 
 test_sentences_paths = [
-    os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "3364de/100/227552520e.wav"),
-    os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "0b41cd/100/fcbdf44243.wav"),
-    os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "1c633a/100/85529c9eae.wav"),
-    os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "0bf4a1/100/9b2e192f48.wav"),
-    os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "4b68e0/100/c34f661393.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000019-0001.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000019-0001.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1", "test/audio/2223/1745/2223_1745_000039.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1", "test/audio/2223/1745/2223_1745_000039.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1", "test/audio/2223/1745/2223_1745_000039.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1", "test/audio/3468/1378/3468_1378_000036-0001.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1", "test/audio/3468/1378/3468_1378_000036-0001.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1", "test/audio/3468/1378/3468_1378_000036-0001.wav"),
+    os.path.join(CML_DATASET_PATH, "cml_tts_dataset_polish_v0.1", "test/audio/1889/1447/1889_1447_000033.wav")
 ]
 
 ### Extract speaker embeddings
@@ -163,7 +186,7 @@ for dataset_conf in DATASETS_CONFIG_LIST:
 
 #check if test_sentences_paths exists
 for test_sentence_path in tqdm(test_sentences_paths, desc="Checking test sentences paths"):
-    assert os.path.exists(test_sentence_path), f"Test sentence path {test_sentence_path} does not exist, please make sure to download the CML-TTS dataset and set the ALC_DATASET_PATH to the correct path"
+    assert os.path.exists(test_sentence_path), f"Test sentence path {test_sentence_path} does not exist, please make sure to download the CML-TTS dataset and set the CML_DATASET_PATH to the correct path"
 
 # Audio config used in training.
 audio_config = VitsAudioConfig(
@@ -257,61 +280,82 @@ config = VitsConfig(
     mixed_precision=False,
     test_sentences=[
         [
-            "Isso significa muito para mim. Obrigada.",
-            "3364de",
+            "E o sol, quando aparece, Já o encontra, robusto e manso, a trabalhar. Forte e meigo animal! Que bondade serena Tem na doce expressão da face resignada.",
+            3050,
             None,
             "pt-br",
-            os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "3364de/100/227552520e.wav")
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
         ],
         [
-            "This means a lot to me. Thanks.",
-            "3364de",
+            "And the sun, when it appears, Already finds him, robust and gentle, at work. Strong and tender animal! What serene kindness Lies in the sweet expression of the resigned face.",
+            3050,
             None,
             "en",
-            os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "3364de/100/227552520e.wav")
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000020.wav")
         ],
-        # [
-        #     "Cela signifie beaucoup pour moi. Merci.",
-        #     "3364de",
-        #     None,
-        #     "fr",
-        #     os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "3364de/100/227552520e.wav")
-        # ],
-        # [
-        #     "Esto significa mucho para mi. Gracias.",
-        #     "3364de",
-        #     None,
-        #     "sp",
-        #     os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "3364de/100/227552520e.wav")
-        # ],
         [
-            "Ao que Richard respondia que a amava também e que queria ficar com ela para sempre. E ambos acreditavam.",
-            "1c633a",
+            "É que, às vezes, amarrado Me deixam durante o dia.",
+            3050,
             None,
             "pt-br",
-            os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "1c633a/100/85529c9eae.wav")
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000019-0001.wav")
         ],
         [
-            "To which Richard replied that he loved her too and wanted to be with her forever. And they both believed.",
-            "1c633a",
+            "It's just that, sometimes, they leave me tied up during the day.",
+            3050,
             None,
             "en",
-            os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "1c633a/100/85529c9eae.wav")
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_portuguese_v0.1", "test/audio/3050/2941/3050_2941_000019-0001.wav")
         ],
-        # [
-        #     "Ce à quoi Richard a répondu qu'il l'aimait aussi et qu'il voulait être avec elle pour toujours. Et ils y croyaient tous les deux.",
-        #     "1c633a",
-        #     None,
-        #     "fr",
-        #     os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "1c633a/100/85529c9eae.wav")
-        # ],
-        # [
-        #     "A lo que Richard respondió que él también la amaba y quería estar con ella para siempre. Y ambos creyeron.",
-        #     "1c633a",
-        #     None,
-        #     "sp",
-        #     os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz", "1c633a/100/85529c9eae.wav")
-        # ],
+        [
+            "O être humain! te voilà, maintenant, nu comme un ver, en présence de mon glaive de diamant",
+            2223,
+            None,
+            "fr",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1", "test/audio/2223/1745/2223_1745_000039.wav")
+        ],
+        [
+            "Oh human being! Here you are, now, naked as a worm, in the presence of my diamond sword.",
+            2223,
+            None,
+            "en",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1", "test/audio/2223/1745/2223_1745_000039.wav")
+        ],
+        [
+            "Ó ser humano! Aqui estás tu, agora, nu como uma minhoca, na presença da minha espada de diamante.",
+            2223,
+            None,
+            "pt-br",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_french_v0.1", "test/audio/2223/1745/2223_1745_000039.wav")
+        ],
+        [
+            "Finalmente, el doctor Pedro Recio Agüero de Tirteafuera prometió de darle de cenar aquella noche, aunque excediese de todos los aforismos de Hipócrates.",
+            3468,
+            None,
+            "sp",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1", "test/audio/3468/1378/3468_1378_000036-0001.wav")
+        ],
+        [
+            "Finalmente, o doutor Pedro Recio Agüero de Tirteafuera prometeu dar-lhe jantar naquela noite, mesmo que excedesse todos os aforismos de Hipócrates.",
+            3468,
+            None,
+            "pt-br",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1", "test/audio/3468/1378/3468_1378_000036-0001.wav")
+        ],
+        [
+            "Finalement, le docteur Pedro Recio Agüero de Tirteafuera a promis de lui donner à dîner cette nuit-là, même si cela dépassait tous les aphorismes d'Hippocrate.",
+            3468,
+            None,
+            "fr",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_spanish_v0.1", "test/audio/3468/1378/3468_1378_000036-0001.wav")
+        ],
+        [
+            "Pokazywało się wówczas, że magazyn konfekcji był tylko fasadš, za którš kryła się antykwarnia, zbiór wysoce dwuznacznych wydawnictw i druków prywatnych",
+            1890,
+            None,
+            "pl",
+            os.path.join(CML_DATASET_PATH, "cml_tts_dataset_polish_v0.1", "test/audio/1889/1447/1889_1447_000033.wav")
+        ]
     ],
     # Enable the weighted sampler
     use_weighted_sampler=True,

@@ -638,6 +638,11 @@ class ProsodyEncoder(nn.Module):
         """
         super(ProsodyEncoder, self).__init__()
 
+        self.n_bands = n_bands
+
+        if self.n_bands is not None and self.n_bands > 0:
+            conv_filters[0] = self.n_bands
+
         # Convolutional layers
         self.conv_layers = nn.ModuleList()
         for i in range(len(conv_filters) - 1):
@@ -652,7 +657,7 @@ class ProsodyEncoder(nn.Module):
         self.fc_mu = nn.Linear(2 * lstm_units, z_dim)
         self.fc_logvar = nn.Linear(2 * lstm_units, z_dim)
 
-        self.n_bands = n_bands
+        
 
     def reparametrize(self, mu, logvar):
         """
@@ -1161,7 +1166,7 @@ class Vits(BaseTTS):
         # prosody embedding
         prosody_emb = None
         if self.args.use_prosody_embedding:
-            prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(y)
+            prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(mel)
             prosody_emb = prosody_emb.unsqueeze(-1)
 
         x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, prosody_emb=prosody_emb)
@@ -1274,7 +1279,7 @@ class Vits(BaseTTS):
 
         prosody_emb = None
         if self.args.use_prosody_embedding:
-            prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(spec)
+            prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(mel)
             prosody_emb = prosody_emb.unsqueeze(-1)
 
         x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, prosody_emb=prosody_emb)
@@ -1669,6 +1674,15 @@ class Vits(BaseTTS):
 
             spec = spec.to(device)
 
+            mel = spec_to_mel(
+                spec=spec,
+                n_fft=self.config.audio.fft_size,
+                num_mels=self.config.audio.num_mels,
+                sample_rate=self.config.audio.sample_rate,
+                fmin=self.config.audio.mel_fmin,
+                fmax=self.config.audio.mel_fmax,
+            )
+
             language_id = self.language_manager.name_to_id.get(language_id, None)
 
             language_name = None
@@ -1698,7 +1712,8 @@ class Vits(BaseTTS):
                     "speaker_ids": None,
                     "language_ids": language_id,
                     "durations": None,
-                    "spec": spec
+                    "spec": spec,
+                    "mel": mel,
                 },
             )
 
