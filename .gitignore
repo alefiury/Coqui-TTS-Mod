@@ -19,9 +19,12 @@ checkpoints/
 input.zip
 VIPT-CML-*/
 VIPT-VCTK-*/
+VIPT-ALC-*/
 VIPT-ALC-April-*/
 output_alc/
 output_alc_cml/
+output_alc_cml_mel/
+train_clean_360.tar.gz
 short_audios.txt
 test_metadata_complete.csv
 train_sim.csv
