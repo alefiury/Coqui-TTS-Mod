@@ -1,0 +1,1 @@
+Hence, two messages can be sent in opposite directions over the same line simultaneously.

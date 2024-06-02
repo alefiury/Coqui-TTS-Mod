@@ -1,0 +1,1 @@
+When Laplace and Lagrange investigated the question of the stability or instability of the solar system, they did so on the hypothesis that the bodies composing it were rigid.

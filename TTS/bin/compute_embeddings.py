@@ -2,6 +2,7 @@ import argparse
 import os
 from argparse import RawTextHelpFormatter
 
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -10,6 +11,16 @@ from TTS.config.shared_configs import BaseDatasetConfig
 from TTS.tts.datasets import load_tts_samples
 from TTS.tts.utils.managers import save_file
 from TTS.tts.utils.speakers import SpeakerManager
+
+
+def embedding_to_torch(d_vector, cuda=False, device="cpu"):
+    if cuda:
+        device = "cuda"
+    if d_vector is not None:
+        d_vector = np.asarray(d_vector)
+        d_vector = torch.from_numpy(d_vector).type(torch.FloatTensor)
+        d_vector = d_vector.squeeze().unsqueeze(0).to(device)
+    return d_vector
 
 
 def compute_embeddings(
@@ -79,6 +90,13 @@ def compute_embeddings(
         else:
             # extract the embedding
             embedd = encoder_manager.compute_embedding_from_clip(audio_file)
+
+        embed_test = embedding_to_torch(embedd)
+
+        # if embedd has any nan values, skip it
+        if torch.isnan(embed_test).any():
+            print(f"Embedding for {embedding_key} is NaN, skipping.")
+            continue
 
         # create speaker_mapping if target dataset is defined
         speaker_mapping[embedding_key] = {}

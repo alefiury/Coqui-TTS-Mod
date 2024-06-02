@@ -1,0 +1,1 @@
+We simply do something, and when it fails, we do something else, and keep on trying till we hit upon something which works, and then we adopt that method as a rule of thumb measure in subsequent procedure.

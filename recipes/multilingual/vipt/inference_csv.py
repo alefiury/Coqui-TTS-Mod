@@ -5,10 +5,51 @@ import numpy as np
 import torch
 from tqdm import tqdm
 import shutil
+from librosa.filters import mel as librosa_mel_fn
 import pandas as pd
 
 from TTS.tts.configs.vits_config import VitsConfig
 from TTS.tts.models.vits import Vits, wav_to_spec
+
+hann_window = {}
+mel_basis = {}
+
+
+def _amp_to_db(x, C=1, clip_val=1e-5):
+    return torch.log(torch.clamp(x, min=clip_val) * C)
+
+
+def _db_to_amp(x, C=1):
+    return torch.exp(x) / C
+
+
+def amp_to_db(magnitudes):
+    output = _amp_to_db(magnitudes)
+    return output
+
+
+def db_to_amp(magnitudes):
+    output = _db_to_amp(magnitudes)
+    return output
+
+
+def spec_to_mel(spec, n_fft, num_mels, sample_rate, fmin, fmax):
+    """
+    Args Shapes:
+        - spec : :math:`[B,C,T]`
+
+    Return Shapes:
+        - mel : :math:`[B,C,T]`
+    """
+    global mel_basis
+    dtype_device = str(spec.dtype) + "_" + str(spec.device)
+    fmax_dtype_device = str(fmax) + "_" + dtype_device
+    if fmax_dtype_device not in mel_basis:
+        mel = librosa_mel_fn(sr=sample_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax)
+        mel_basis[fmax_dtype_device] = torch.from_numpy(mel).to(dtype=spec.dtype, device=spec.device)
+    mel = torch.matmul(mel_basis[fmax_dtype_device], spec)
+    mel = amp_to_db(mel)
+    return mel
 
 
 def load_audio(file_path):
@@ -69,6 +110,15 @@ def inference(model, ref_wav, text, language_id=None, device="cuda"):
 
     spec = torch.tensor(spec, dtype=torch.float32, device=device)
 
+    mel = spec_to_mel(
+        spec=spec,
+        n_fft=model.config.audio.fft_size,
+        num_mels=model.config.audio.num_mels,
+        sample_rate=model.config.audio.sample_rate,
+        fmin=model.config.audio.mel_fmin,
+        fmax=model.config.audio.mel_fmax,
+    )
+
     print("Spec2.shape", spec.shape)
 
     language_id = model.language_manager.name_to_id.get(language_id, None)
@@ -103,7 +153,8 @@ def inference(model, ref_wav, text, language_id=None, device="cuda"):
             "speaker_ids": None,
             "language_ids": language_id,
             "durations": None,
-            "spec": spec
+            "spec": spec,
+            "mel": mel,
         },
     )["model_outputs"]
 
@@ -115,11 +166,11 @@ def main():
     # ALC_DATASET_PATH = "/raid/fred/DATASETS/dataset_alc_new_24khz"
     # OUTPUT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/output_alc"
 
-    CONFIG_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/config.json"
-    CHECKPOINT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/best_model.pth"
-    LANGUAGE_ID_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoints/language_ids.json"
+    CONFIG_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-May-23-2024_05+04PM-0d145485/config.json"
+    CHECKPOINT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-May-23-2024_05+04PM-0d145485/checkpoint_1735000.pth"
+    LANGUAGE_ID_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-ALC-May-23-2024_05+04PM-0d145485/language_ids.json"
     ALC_DATASET_PATH = "/raid/fred/DATASETS/dataset_alc_new_24khz"
-    OUTPUT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/output_alc_cml"
+    OUTPUT_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/output_alc_cml_mel"
 
     TEST_METADATA_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/test_metadata_complete.csv"
 

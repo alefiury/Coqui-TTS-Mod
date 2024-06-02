@@ -75,21 +75,21 @@ RUN_NAME = "VIPT-ALC"
 # Path where you want to save the models outputs (configs, checkpoints and tensorboard logs)
 OUT_PATH = os.path.dirname(os.path.abspath(__file__))  # "/raid/coqui/Checkpoints/original-YourTTS/"
 
-RESTORE_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/VIPT-CML-May-09-2024_03+25PM-0000000/checkpoint_1165000.pth"
+RESTORE_PATH = "/raid/alefiury/translation/Coqui-TTS-Mod/recipes/multilingual/vipt/checkpoint/checkpoint_1165000.pth"
 
 # This paramter is useful to debug, it skips the training epochs and just do the evaluation  and produce the test sentences
 # SKIP_TRAIN_EPOCH = True
 SKIP_TRAIN_EPOCH = False
 
 # Set here the batch size to be used in training and evaluation
-BATCH_SIZE = 6
+BATCH_SIZE = 16
 
 # Training Sampling rate and the target sampling rate for resampling the downloaded dataset (Note: If you change this you might need to redownload the dataset !!)
 # Note: If you add new datasets, please make sure that the dataset sampling rate and this parameter are matching, otherwise resample your audios
 SAMPLE_RATE = 24000
 
 # Max audio length in seconds to be used in training (every audio bigger than it will be ignored)
-MAX_AUDIO_LEN_IN_SECONDS = 15
+MAX_AUDIO_LEN_IN_SECONDS = 20
 
 ### Download CML-TTS dataset
 # You need to download the dataset for all languages manually and extract it to a path and then set the ALC_DATASET_PATH to this path: https://github.com/freds0/CML-TTS-Dataset#download
@@ -114,7 +114,7 @@ libritts_config = BaseDatasetConfig(
 pt_config = BaseDatasetConfig(
     formatter="alc_tts",
     dataset_name="alc_tts",
-    meta_file_train="train_metadata.csv",
+    meta_file_train="train_sim_duration.csv",
     meta_file_val="",
     path=os.path.join(ALC_DATASET_PATH, "dataset_alc_new_24khz"),
     language="pt-br",

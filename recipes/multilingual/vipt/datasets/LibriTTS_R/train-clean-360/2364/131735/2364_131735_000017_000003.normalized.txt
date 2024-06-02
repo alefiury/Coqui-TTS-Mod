@@ -1,0 +1,1 @@
+If both transmitters be closed simultaneously, both batteries will be placed to the line, which would practically result in doubling the current in each of the main line coils, in consequence of which both relays are energized and their armatures attracted through the operation of the keys at the distant ends.

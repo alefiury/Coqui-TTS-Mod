@@ -1,0 +1,1 @@
+For example, the two propositions, 'this tree is a beech' and 'this tree is not a beech', are not coherent, because of the law of contradiction.

@@ -1,0 +1,1 @@
+If the direction is reversed, the polarity will also be reversed.

@@ -1,0 +1,1 @@
+Hatches that had been closed the day before were now open.

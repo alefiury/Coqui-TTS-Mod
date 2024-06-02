@@ -1,0 +1,1 @@
+To simplify calculation, he divided the orbit into triangles, and tried if making the triangles equal would do.

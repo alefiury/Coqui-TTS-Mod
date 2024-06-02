@@ -1,0 +1,1 @@
+It will be understood, of course, that the polar relay, as used in the quadruplex system, is wound differentially, and therefore its operation is somewhat similar in principle to that of the differentially wound neutral relay, in that it does not respond to the operation of the key at the home office, but only operates in response to the movements of the distant key.

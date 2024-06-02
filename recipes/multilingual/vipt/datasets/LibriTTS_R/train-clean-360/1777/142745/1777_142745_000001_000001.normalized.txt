@@ -1,0 +1,1 @@
+This is of course familiar in such matters as teaching arithmetic: 'two and two are four' is first learnt in the case of some particular pair of couples, and then in some other particular case, and so on, until at last it becomes possible to see that it is true of any pair of couples. The same thing happens with logical principles.

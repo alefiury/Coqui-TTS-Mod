@@ -1,0 +1,1 @@
+This minute quantity represents the retardation of the earth per day.

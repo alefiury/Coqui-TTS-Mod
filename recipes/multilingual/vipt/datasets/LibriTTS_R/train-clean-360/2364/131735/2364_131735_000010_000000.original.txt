@@ -1,0 +1,1 @@
+As the path to the quadruplex passes through the duplex, let us consider the Stearns system, after noting one other principle--namely, that if more than one path is presented in which an electric current may complete its circuit, it divides in proportion to the resistance of each path.

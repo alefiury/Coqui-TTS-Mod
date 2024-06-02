@@ -1,0 +1,1 @@
+The problem included handling and crushing the "run of the mine," without selection.

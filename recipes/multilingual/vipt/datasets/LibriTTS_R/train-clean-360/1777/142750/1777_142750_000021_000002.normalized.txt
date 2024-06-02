@@ -1,0 +1,1 @@
+Thus a belief is true when there is a corresponding fact, and is false when there is no corresponding fact.

@@ -1,0 +1,1 @@
+The loss per revolution is exceedingly small, but it accumulates, and at any era the total loss is the sum of all the losses preceding it.

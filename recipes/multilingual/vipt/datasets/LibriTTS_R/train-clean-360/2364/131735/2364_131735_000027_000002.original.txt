@@ -1,0 +1,1 @@
+With the duplex, as we have seen, the current on the main line is changed in strength only when both keys at OPPOSITE stations are closed together, so that a current due to both batteries flows over the main line.

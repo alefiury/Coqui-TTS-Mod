@@ -1,0 +1,1 @@
+The threads are not sticky; they act only by their confused multitude.

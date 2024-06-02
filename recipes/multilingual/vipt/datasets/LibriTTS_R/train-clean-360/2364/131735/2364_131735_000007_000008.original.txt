@@ -1,0 +1,1 @@
+When the operator releases the pressure on his key the circuit is broken, current does not flow, the magnetic effect ceases, and the armature is drawn back by its spring. These movements give rise to the clicking sounds which represent the dots and dashes of the Morse or other alphabet as transmitted by the operator.

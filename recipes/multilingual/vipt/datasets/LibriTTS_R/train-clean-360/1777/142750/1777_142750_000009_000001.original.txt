@@ -1,0 +1,1 @@
+Two propositions are coherent when both may be true, and are incoherent when one at least must be false.

@@ -1,0 +1,1 @@
+Each point of an object will be represented in the image not by a point but by a coloured patch: a fact which amply explains the observed blurring and indistinctness.

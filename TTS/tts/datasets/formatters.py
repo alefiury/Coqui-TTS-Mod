@@ -54,39 +54,30 @@ def libri_tts_r(root_path, meta_files=None, ignored_speakers=None):
 
 def alc_tts(root_path, meta_file, ignored_speakers=None):
     """Interal dataset formatter."""
-    filepath = os.path.join(root_path, meta_file)
-    # ensure there are 2 columns for every line
-    with open(filepath, "r", encoding="utf8") as f:
-        lines = f.readlines()
-    num_cols = len(lines[0].split("|"))  # take the first row as reference
-    for idx, line in enumerate(lines[1:]):
-        if len(line.split("|")) != num_cols:
-            print(f" > Missing column in line {idx + 1} -> {line.strip()}")
-    # load metadata
-    metadata = pd.read_csv(
-        os.path.join(root_path, meta_file),
-        sep="|",
-        header=None,
-        names=["wav_filename", "transcript"]
-    )
-    assert all(x in metadata.columns for x in ["wav_filename", "transcript"])
+    metadata_filepath = os.path.join(root_path, meta_file)
+    metadata = pd.read_csv(metadata_filepath)
+    assert all(x in metadata.columns for x in ["audio_segment_path", "sentence"])
+    client_id = None if "client_id" in metadata.columns else "default"
+    emotion_name = None if "emotion_name" in metadata.columns else "neutral"
     items = []
-    emotion_name = None if "emotion_name" in metadata.columns else None
     not_found_counter = 0
     for row in metadata.itertuples():
-        speaker_name = row.wav_filename.split("/")[0]
-        if ignored_speakers is not None and speaker_name in ignored_speakers:
+        if client_id is None and ignored_speakers is not None and row.client_id in ignored_speakers:
             continue
-        audio_path = os.path.join(root_path, row.wav_filename)
+        audio_path = os.path.join(os.path.dirname(root_path), row.audio_segment_path)
+        speaker_name = audio_path.replace(root_path+"/", "").split("/")[0]
+        if row.cer > 0.2 or row.duration < 2.0:
+            continue
+
         if not os.path.exists(audio_path):
             not_found_counter += 1
             continue
         items.append(
             {
-                "text": row.transcript,
+                "text": row.sentence,
                 "audio_file": audio_path,
-                "speaker_name": speaker_name if speaker_name is not None else row.speaker_name,
-                "emotion_name": emotion_name,
+                "speaker_name": speaker_name,
+                "emotion_name": emotion_name if emotion_name is not None else row.emotion_name,
                 "root_path": root_path,
             }
         )
@@ -100,15 +91,15 @@ def cml_tts(root_path, meta_file, ignored_speakers=None):
     https://github.com/freds0/CML-TTS-Dataset/"""
     filepath = os.path.join(root_path, meta_file)
     # ensure there are 4 columns for every line
-    with open(filepath, "r", encoding="utf8") as f:
-        lines = f.readlines()
-    num_cols = len(lines[0].split("|"))  # take the first row as reference
-    for idx, line in enumerate(lines[1:]):
-        if len(line.split("|")) != num_cols:
-            print(f" > Missing column in line {idx + 1} -> {line.strip()}")
+    # with open(filepath, "r", encoding="utf8") as f:
+    #     lines = f.readlines()
+    # num_cols = len(lines[0].split("|"))  # take the first row as reference
+    # for idx, line in enumerate(lines[1:]):
+    #     if len(line.split("|")) != num_cols:
+    #         print(f" > Missing column in line {idx + 1} -> {line.strip()}")
     # load metadata
-    metadata = pd.read_csv(os.path.join(root_path, meta_file), sep="|")
-    assert all(x in metadata.columns for x in ["wav_filename", "transcript"])
+    metadata = pd.read_csv(meta_file)
+    assert all(x in metadata.columns for x in ["audio_segment_path", "sentence"])
     client_id = None if "client_id" in metadata.columns else "default"
     emotion_name = None if "emotion_name" in metadata.columns else "neutral"
     items = []
@@ -116,13 +107,16 @@ def cml_tts(root_path, meta_file, ignored_speakers=None):
     for row in metadata.itertuples():
         if client_id is None and ignored_speakers is not None and row.client_id in ignored_speakers:
             continue
-        audio_path = os.path.join(root_path, row.wav_filename)
+        audio_path = os.path.join(root_path, row.audio_segment_path)
+        if row.cer > 0.2 or row.duration < 2.0:
+            continue
+
         if not os.path.exists(audio_path):
             not_found_counter += 1
             continue
         items.append(
             {
-                "text": row.transcript,
+                "text": row.sentence,
                 "audio_file": audio_path,
                 "speaker_name": client_id if client_id is not None else row.client_id,
                 "emotion_name": emotion_name if emotion_name is not None else row.emotion_name,

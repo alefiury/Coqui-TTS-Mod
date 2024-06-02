@@ -1,0 +1,1 @@
+For example, it is quite demonstrable that during the making of a simple dash of the Morse alphabet by the neutral relay at the home station the distant pole-changer may reverse its battery several times; the home pole-changer may do likewise, and the home transmitter may increase and decrease the electromotive force of the home battery repeatedly.

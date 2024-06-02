@@ -1,0 +1,1 @@
+It must be borne in mind, however, in considering a duplex system, that a differential relay is used AT EACH END of the line and forms part of the circuit; and that while each relay must be absolutely unresponsive to the signals SENT OUT FROM ITS HOME OFFICE, it must respond to signals transmitted by a DISTANT OFFICE.

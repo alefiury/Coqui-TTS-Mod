@@ -1,0 +1,1 @@
+Thus far we have referred to two systems, one the neutral or differential duplex, and the other the combination of the neutral and polar relays, making a diplex system.

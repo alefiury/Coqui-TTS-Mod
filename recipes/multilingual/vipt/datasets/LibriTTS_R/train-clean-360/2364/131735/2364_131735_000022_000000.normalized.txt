@@ -1,0 +1,1 @@
+By a combination of the neutral relay and the polar relay two operators, by manipulating two telegraph keys in the ordinary way, can simultaneously send two messages over one line in the SAME direction with the SAME current, one operator varying its strength and the other operator varying its polarity or direction of flow.
