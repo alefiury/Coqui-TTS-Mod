@@ -1,1 +1,0 @@
-No inference is permissible in either direction.

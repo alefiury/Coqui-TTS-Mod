@@ -1,1 +1,0 @@
-The relay at A would be unresponsive, but the core of the relay at B would be magnetized and its armature respond to signals from a In like manner, if the transmitter at B be closed, current would flow through similar parts and thus cause the relay at A to respond.

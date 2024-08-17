@@ -1,1 +1,0 @@
-Very well; but from this exception we will pass to another, from that to a third, and so on from exceptions to exceptions, until we have reduced the rule to a pure abstraction.

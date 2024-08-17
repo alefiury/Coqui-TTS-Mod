@@ -1,1 +1,0 @@
-Mercury 1,121 Venus 2,339 Earth 1,000 Mars 304 Jupiter 2,136 Saturn 1,033 Uranus 21 Neptune 9

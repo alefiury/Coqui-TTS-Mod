@@ -1,1 +1,0 @@
-A new union might subsequently be formed, but the original one could never by coercion be restored.

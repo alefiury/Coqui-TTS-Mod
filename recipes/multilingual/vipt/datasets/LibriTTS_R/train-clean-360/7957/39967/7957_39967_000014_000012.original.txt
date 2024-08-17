@@ -1,1 +1,0 @@
-The final end of life is fixed; given a state framed with this end in view, not even minor details are to be altered.

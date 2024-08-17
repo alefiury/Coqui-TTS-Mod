@@ -1,1 +1,0 @@
-It makes connecting links explicit in the form of relationships.

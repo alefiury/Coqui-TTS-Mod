@@ -1,1 +1,0 @@
-Now no local movement of a body can be instantaneous, as everything that moves from one place to another must pass through the intervening space before reaching the end: whereas the diffusion of light is instantaneous.

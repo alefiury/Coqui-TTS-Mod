@@ -1,1 +1,0 @@
-In the Speech 'Cleon walks', 'Cleon' is an instance of such a part.

@@ -1,1 +1,0 @@
-Fix did not look at the state of things in the same light.

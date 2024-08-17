@@ -1,1 +1,0 @@
-Coloured media act like filters, stopping certain kinds but allowing the rest to go through.

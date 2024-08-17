@@ -1,1 +1,0 @@
-To accomplish this object Edison introduced another and distinct feature-namely, the using of the same current, but ALSO varying its DIRECTION of flow; that is to say, alternately reversing the POLARITY of the batteries as applied to the line and thus producing corresponding changes in the polarity of another specially constructed type of relay, called a polarized relay.

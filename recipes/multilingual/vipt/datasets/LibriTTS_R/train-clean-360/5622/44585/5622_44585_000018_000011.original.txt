@@ -1,1 +1,0 @@
-But that method must not be applied on the platform!

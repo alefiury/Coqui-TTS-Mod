@@ -1,1 +1,0 @@
-This difficulty was solved by dividing the battery at each station into two unequal parts, the smaller battery being always in circuit with the pole changer ready to have its polarity reversed on the main line to operate the distant polar relay, but the spring retracting the armature of the neutral relay is made so stiff as to resist these weak currents.

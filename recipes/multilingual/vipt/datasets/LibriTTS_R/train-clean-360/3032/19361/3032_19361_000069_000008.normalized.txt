@@ -1,1 +1,0 @@
-So, moving the planet in a selected ellipse, with the sun in one focus, at a speed given by the equable area description, its position agreed with Tycho's observations within the limits of the error of experiment.

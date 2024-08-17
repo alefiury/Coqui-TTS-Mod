@@ -1,1 +1,0 @@
-There is a battery, C, and a key, K. When the key is depressed, current flows through the relay coils at A, but no magnetism is produced, as they oppose each other.

@@ -1,1 +1,0 @@
-The current, however, flows out through the main-line coil over the line and through the main-line coil 1 at B, completing its circuit to earth and magnetizing the bar of the relay, thus causing its armature to be attracted.

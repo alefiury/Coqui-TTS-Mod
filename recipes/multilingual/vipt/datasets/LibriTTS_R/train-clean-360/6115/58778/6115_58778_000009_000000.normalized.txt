@@ -1,1 +1,0 @@
-The problem of building a world and then tearing it to pieces is a very complicated one.

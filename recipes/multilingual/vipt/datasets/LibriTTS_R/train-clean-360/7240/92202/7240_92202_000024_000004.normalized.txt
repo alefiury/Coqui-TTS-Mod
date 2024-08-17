@@ -1,1 +1,0 @@
-The top that holds out the longest is the winner.

@@ -1,1 +1,0 @@
-If we already know that two and two always make four, and we know that Brown and Jones are two, and so are Robinson and Smith, we can deduce that Brown and Jones and Robinson and Smith are four.

@@ -1,1 +1,0 @@
-Instances might be multiplied indefinitely, but enough has been said to show that there are relations which require more than two terms before they can occur.

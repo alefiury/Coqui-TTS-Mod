@@ -1,1 +1,0 @@
-When the key is released the battery is again connected to earth.

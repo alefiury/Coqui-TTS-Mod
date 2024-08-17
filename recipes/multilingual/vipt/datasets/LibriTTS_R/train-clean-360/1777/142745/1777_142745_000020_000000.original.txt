@@ -1,1 +1,0 @@
-The fact is that, in simple mathematical judgements such as 'two and two are four', and also in many judgements of logic, we can know the general proposition without inferring it from instances, although some instance is usually necessary to make clear to us what the general proposition means.

@@ -1,1 +1,0 @@
-It is common to think of relations as though they always held between two terms, but in fact this is not always the case.

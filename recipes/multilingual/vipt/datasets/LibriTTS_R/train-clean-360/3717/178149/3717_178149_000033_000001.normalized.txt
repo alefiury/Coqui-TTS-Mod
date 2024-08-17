@@ -1,1 +1,0 @@
-"If not destroyed, it has a chance to improve its percentage when the pursuer has made its pass."

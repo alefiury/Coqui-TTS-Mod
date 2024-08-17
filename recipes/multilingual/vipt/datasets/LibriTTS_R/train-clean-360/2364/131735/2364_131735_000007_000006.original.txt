@@ -1,1 +1,0 @@
-When the distant operator presses down his key the circuit is closed and a current passes along the line and through the (generally two) coils of the electromagnet, thus magnetizing the iron core.

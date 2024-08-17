@@ -1,1 +1,0 @@
-It can have a clearing-house for orders and ship from the nearest source of supply. The least efficient factories can be first closed when demand falls off. Factories can be specialized to produce that for which each is best fitted.

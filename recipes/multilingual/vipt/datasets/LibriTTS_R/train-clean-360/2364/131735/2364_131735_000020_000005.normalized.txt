@@ -1,1 +1,0 @@
-This device being a relay, its purpose is to repeat transmitted signals into a local circuit, as before explained.

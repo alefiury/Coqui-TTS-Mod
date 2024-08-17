@@ -1,1 +1,0 @@
-Impossibility of "buckling" and harmlessness of a dead short circuit.
