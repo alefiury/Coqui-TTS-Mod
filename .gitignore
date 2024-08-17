@@ -30,6 +30,9 @@ short_audios.txt
 test_metadata_complete.csv
 train_sim.csv
 *.wav
+*.txt
+*.tsv*
+
 train_sim_duration.csv
 
 # C extensions
