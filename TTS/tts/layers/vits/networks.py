@@ -1,11 +1,20 @@
 import math
 
+import yaml
 import torch
 from torch import nn
+from transformers import AutoTokenizer, AutoModel
 
 from TTS.tts.layers.glow_tts.glow import WN
 from TTS.tts.layers.glow_tts.transformer import RelativePositionTransformer
 from TTS.tts.utils.helpers import sequence_mask
+
+import sys
+
+sys.path.append("/raid/alefiury/translation/Coqui-TTS-Mod")
+sys.path.append("/raid/alefiury/translation/Coqui-TTS-Mod/TTS")
+sys.path.append("/raid/alefiury/translation/Coqui-TTS-Mod/TTS/bertpl")
+
 
 LRELU_SLOPE = 0.1
 
@@ -56,39 +65,45 @@ class TextEncoder(nn.Module):
         self.out_channels = out_channels
         self.hidden_channels = hidden_channels
 
-        self.emb = nn.Embedding(n_vocab, hidden_channels)
+        # self.emb = nn.Embedding(n_vocab, hidden_channels)
+        # nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
 
-        nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
+        self.bert = AutoModel.from_pretrained("vinai/xphonebert-base")
+        self.bert.train()
+        self.bert_proj = nn.Linear(self.bert.config.hidden_size, hidden_channels, False)
 
         if language_emb_dim:
             hidden_channels += language_emb_dim
 
-        self.encoder = RelativePositionTransformer(
-            in_channels=hidden_channels,
-            out_channels=hidden_channels,
-            hidden_channels=hidden_channels,
-            hidden_channels_ffn=hidden_channels_ffn,
-            num_heads=num_heads,
-            num_layers=num_layers,
-            kernel_size=kernel_size,
-            dropout_p=dropout_p,
-            layer_norm_type="2",
-            rel_attn_window_size=4,
-        )
+        # self.encoder = RelativePositionTransformer(
+        #     in_channels=hidden_channels,
+        #     out_channels=hidden_channels,
+        #     hidden_channels=hidden_channels,
+        #     hidden_channels_ffn=hidden_channels_ffn,
+        #     num_heads=num_heads,
+        #     num_layers=num_layers,
+        #     kernel_size=kernel_size,
+        #     dropout_p=dropout_p,
+        #     layer_norm_type="2",
+        #     rel_attn_window_size=4,
+        # )
 
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
         if prosody_emb_dim != 0 and prosody_emb_dim is not None:
             self.cond_prosody = nn.Conv1d(prosody_emb_dim, hidden_channels, 1)
 
-    def forward(self, x, x_lengths, lang_emb=None, prosody_emb=None):
+    def forward(self, x, x_lengths, att_mask=None, lang_emb=None, prosody_emb=None):
         """
         Shapes:
             - x: :math:`[B, T]`
             - x_length: :math:`[B]`
         """
-        assert x.shape[0] == x_lengths.shape[0]
-        x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
+        # assert x.shape[0] == x_lengths.shape[0]
+        # x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
+
+        x = self.bert(input_ids=x, attention_mask=att_mask)[0]
+        x = self.bert_proj(x)
 
         # concat the lang emb in embedding chars
         if lang_emb is not None:
@@ -98,13 +113,15 @@ class TextEncoder(nn.Module):
             prosody_emb = self.cond_prosody(prosody_emb)
             prosody_emb = prosody_emb.transpose(2, 1)
             prosody_emb = prosody_emb.expand(x.size(0), x.size(1), -1)
-            # x = x + prosody_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)
             x = x + prosody_emb
 
         x = torch.transpose(x, 1, -1)  # [b, h, t]
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [b, 1, t]
+        if att_mask is None:
+            x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [b, 1, t]
 
-        x = self.encoder(x * x_mask, x_mask)
+        x_mask = att_mask.unsqueeze(1).to(x.dtype)
+
+        # x = self.encoder(x * x_mask, x_mask)
         stats = self.proj(x) * x_mask
 
         m, logs = torch.split(stats, self.out_channels, dim=1)

@@ -1,11 +1,19 @@
 import math
 import os
+import re
+import logging
+import subprocess
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Dict, List, Tuple, Union
 
+from transformers import AutoModel, AutoTokenizer
+from text2phonemesequence import Text2PhonemeSequence
+
 import numpy as np
 import torch
+# import nltk
+# nltk.download('punkt')
 import torch.distributed as dist
 import torchaudio
 from coqpit import Coqpit
@@ -14,10 +22,14 @@ from torch import nn
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
+from nltk.tokenize import word_tokenize
 from torch.utils.data.sampler import WeightedRandomSampler
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
 from trainer.trainer_utils import get_optimizer, get_scheduler
 
+import phonemizer
+
+from TTS.bertpl.util import load_plbert
 from TTS.tts.configs.shared_configs import CharactersConfig
 from TTS.tts.datasets.dataset import TTSDataset, _parse_sample
 from TTS.tts.layers.glow_tts.duration_predictor import DurationPredictor
@@ -375,6 +387,314 @@ class VitsDataset(TTSDataset):
         }
 
 
+class XPhoneBERTVitsDataset(TTSDataset):
+    def __init__(self, model_args, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model_args = model_args
+
+        self.language2id = {
+            "en": "eng-us",
+            "pt-br": "por-bz",
+            "pl": "pol",
+            "it": "ita",
+            "fr": "fra",
+            "du": "dut",
+            "ge": "ger",
+            "sp": "spa",
+        }
+
+        self.xphonebert_tokenizer = AutoTokenizer.from_pretrained("vinai/xphonebert-base")
+        self.pad_id = self.xphonebert_tokenizer.pad_token_id
+
+    def __getitem__(self, idx):
+        item = self.samples[idx]
+        language = item["language"]
+        raw_text = item["text"]
+
+        language_id = self.language2id[language]
+        # text2phone_model = Text2PhonemeSequence(language=language_id, is_cuda=False)
+
+        wav, _ = load_audio(item["audio_file"])
+        if self.model_args.encoder_sample_rate is not None:
+            if wav.size(1) % self.model_args.encoder_sample_rate != 0:
+                wav = wav[:, : -int(wav.size(1) % self.model_args.encoder_sample_rate)]
+
+        wav_filename = os.path.basename(item["audio_file"])
+
+        # input_phonemes = text2phone_model.infer_sentence(item["text"])
+
+        # print(item["text"], input_phonemes)
+
+        # token_ids = self.get_token_ids(idx, item["text"])
+
+        input_phonemes = item["phonemes"]
+
+        if not isinstance(input_phonemes, str):
+            print(f"Phonemization failed for {item['audio_file']} for text: {item['phonemes']}")
+            self.rescue_item_idx += 1
+            return self.__getitem__(self.rescue_item_idx)
+
+        input_ids = self.xphonebert_tokenizer(input_phonemes, return_tensors="pt")
+
+        token_ids = input_ids["input_ids"].squeeze(0)
+        attention_mask = input_ids["attention_mask"].squeeze(0)
+
+        # print(token_ids, attention_mask)
+
+        # after phonemization the text length may change
+        # this is a shameful 🤭 hack to prevent longer phonemes
+        # TODO: find a better fix
+        if len(token_ids) > self.max_text_len or wav.shape[1] < self.min_audio_len:
+            self.rescue_item_idx += 1
+            return self.__getitem__(self.rescue_item_idx)
+
+        return {
+            "raw_text": raw_text,
+            "token_ids": token_ids,
+            "token_len": len(token_ids),
+            "attention_mask": attention_mask,
+            "wav": wav,
+            "wav_file": wav_filename,
+            "speaker_name": item["speaker_name"],
+            "language_name": item["language"],
+            "audio_unique_name": item["audio_unique_name"],
+        }
+
+    @property
+    def lengths(self):
+        lens = []
+        for item in self.samples:
+            _, wav_file, *_ = _parse_sample(item)
+            audio_len = os.path.getsize(wav_file) / 16 * 8  # assuming 16bit audio
+            lens.append(audio_len)
+        return lens
+
+    def collate_fn(self, batch):
+        """
+        Return Shapes:
+            - tokens: :math:`[B, T]`
+            - token_lens :math:`[B]`
+            - token_rel_lens :math:`[B]`
+            - waveform: :math:`[B, 1, T]`
+            - waveform_lens: :math:`[B]`
+            - waveform_rel_lens: :math:`[B]`
+            - speaker_names: :math:`[B]`
+            - language_names: :math:`[B]`
+            - audiofile_paths: :math:`[B]`
+            - raw_texts: :math:`[B]`
+            - audio_unique_names: :math:`[B]`
+        """
+        # convert list of dicts to dict of lists
+        B = len(batch)
+        batch = {k: [dic[k] for dic in batch] for k in batch[0]}
+
+        wav_lengths = torch.LongTensor([x.size(1) for x in batch["wav"]])
+        ids_sorted_decreasing = torch.argsort(wav_lengths, descending=True)
+
+        max_text_len = max([len(x) for x in batch["token_ids"]])
+        token_lens = torch.LongTensor(batch["token_len"])
+        token_rel_lens = token_lens.float() / token_lens.max().float()
+
+        wav_lens = torch.LongTensor([w.shape[1] for w in batch["wav"]])
+        wav_lens_max = wav_lens.max()
+        wav_rel_lens = wav_lens.float() / wav_lens_max.float()
+
+        token_padded = torch.full((B, max_text_len), self.pad_id, dtype=torch.long)
+        attention_padded = torch.zeros((B, max_text_len), dtype=torch.long)
+        wav_padded = torch.zeros((B, 1, wav_lens_max), dtype=torch.float)
+
+        for i in range(len(ids_sorted_decreasing)):
+            token_ids = batch["token_ids"][i]
+            token_padded[i, :len(token_ids)] = torch.LongTensor(token_ids)
+
+            attention_mask = batch["attention_mask"][i]
+            attention_padded[i, :len(attention_mask)] = torch.LongTensor(attention_mask)
+
+            wav = batch["wav"][i]
+            wav_padded[i, :, :wav.size(1)] = torch.FloatTensor(wav)
+
+        return {
+            "tokens": token_padded,
+            "token_lens": token_lens,
+            "token_rel_lens": token_rel_lens,
+            "attention_mask": attention_padded,
+            "waveform": wav_padded,  # (B x T)
+            "waveform_lens": wav_lens,  # (B)
+            "waveform_rel_lens": wav_rel_lens,
+            "speaker_names": batch["speaker_name"],
+            "language_names": batch["language_name"],
+            "audio_files": batch["wav_file"],
+            "raw_text": batch["raw_text"],
+            "audio_unique_names": batch["audio_unique_name"],
+        }
+
+
+class TextCleaner:
+    def __init__(self, dummy=None):
+        _pad = "$"
+        _punctuation = ';:,.!?¡¿—…"«»“” '
+        _letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+        _letters_ipa = "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"
+
+        # Export all symbols:
+        symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
+
+        dicts = {}
+        for i in range(len((symbols))):
+            dicts[symbols[i]] = i
+
+        self.word_index_dictionary = dicts
+
+    def __call__(self, text):
+        indexes = []
+        # make sure that the text is a string
+        text = str(text)
+        for char in text:
+            try:
+                indexes.append(self.word_index_dictionary[char])
+            except KeyError:
+                # print(f"Phoneme Character: '{char}' cannot be found in the dictionary.")
+                pass
+        # indexes.insert(0, 0)
+        # indexes.append(0)
+
+        return indexes
+
+
+class BERTPLVitsDataset(TTSDataset):
+    def __init__(self, model_args, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pad_id = self.tokenizer.characters.pad_id
+        self.model_args = model_args
+        self.text_cleaner = TextCleaner()
+
+    def __getitem__(self, idx):
+        item = self.samples[idx]
+
+        raw_text = item["text"]
+
+        wav, _ = load_audio(item["audio_file"])
+        if self.model_args.encoder_sample_rate is not None:
+            if wav.size(1) % self.model_args.encoder_sample_rate != 0:
+                wav = wav[:, : -int(wav.size(1) % self.model_args.encoder_sample_rate)]
+
+        wav_filename = os.path.basename(item["audio_file"])
+
+        token_ids = self.get_token_ids(idx, item["text"])
+
+        phonemes = item["phonemes"]
+
+        token_ids_phonems_styletts = self.text_cleaner(phonemes)
+
+        assert len(token_ids_phonems_styletts) > 0, "Empty phonemization"
+
+        # after phonemization the text length may change
+        # this is a shameful 🤭 hack to prevent longer phonemes
+        # TODO: find a better fix
+        if len(token_ids) > self.max_text_len or wav.shape[1] < self.min_audio_len:
+            self.rescue_item_idx += 1
+            return self.__getitem__(self.rescue_item_idx)
+
+        # Hardcoded limit for the phonemization
+        # The Albert model has a limit of 512 tokens
+        if len(token_ids_phonems_styletts) > 512:
+            print(f"Phonemization too long: {len(token_ids_phonems_styletts)}")
+            self.rescue_item_idx += 1
+            return self.__getitem__(self.rescue_item_idx)
+
+        return {
+            "raw_text": raw_text,
+            "token_ids": token_ids,
+            "token_ids_phonems_styletts": token_ids_phonems_styletts,
+            "token_len": len(token_ids),
+            "token_len_phonems_styletts": len(token_ids_phonems_styletts),
+            "wav": wav,
+            "wav_file": wav_filename,
+            "speaker_name": item["speaker_name"],
+            "language_name": item["language"],
+            "audio_unique_name": item["audio_unique_name"],
+        }
+
+    @property
+    def lengths(self):
+        lens = []
+        for item in self.samples:
+            _, wav_file, *_ = _parse_sample(item)
+            audio_len = os.path.getsize(wav_file) / 16 * 8  # assuming 16bit audio
+            lens.append(audio_len)
+        return lens
+
+    def collate_fn(self, batch):
+        """
+        Return Shapes:
+            - tokens: :math:`[B, T]`
+            - token_lens :math:`[B]`
+            - token_rel_lens :math:`[B]`
+            - waveform: :math:`[B, 1, T]`
+            - waveform_lens: :math:`[B]`
+            - waveform_rel_lens: :math:`[B]`
+            - speaker_names: :math:`[B]`
+            - language_names: :math:`[B]`
+            - audiofile_paths: :math:`[B]`
+            - raw_texts: :math:`[B]`
+            - audio_unique_names: :math:`[B]`
+        """
+        # convert list of dicts to dict of lists
+        B = len(batch)
+        batch = {k: [dic[k] for dic in batch] for k in batch[0]}
+
+        _, ids_sorted_decreasing = torch.sort(
+            torch.LongTensor([x.size(1) for x in batch["wav"]]), dim=0, descending=True
+        )
+
+        max_text_len = max([len(x) for x in batch["token_ids"]])
+        token_lens = torch.LongTensor(batch["token_len"])
+        token_rel_lens = token_lens / token_lens.max()
+
+        wav_lens = [w.shape[1] for w in batch["wav"]]
+        wav_lens = torch.LongTensor(wav_lens)
+        wav_lens_max = torch.max(wav_lens)
+        wav_rel_lens = wav_lens / wav_lens_max
+
+        token_ids_phonems_styletts_lens = torch.LongTensor(batch["token_len_phonems_styletts"])
+        token_ids_phonems_styletts_max = torch.max(token_ids_phonems_styletts_lens)
+        token_ids_phonems_styletts_rel_lens = token_ids_phonems_styletts_lens / token_ids_phonems_styletts_max
+        token_ids_phonems_styletts_padded = torch.LongTensor(B, token_ids_phonems_styletts_max)
+        token_ids_phonems_styletts_padded = token_ids_phonems_styletts_padded.zero_()
+
+        token_padded = torch.LongTensor(B, max_text_len)
+        wav_padded = torch.FloatTensor(B, 1, wav_lens_max)
+        token_padded = token_padded.zero_() + self.pad_id
+        wav_padded = wav_padded.zero_() + self.pad_id
+        for i in range(len(ids_sorted_decreasing)):
+            token_ids = batch["token_ids"][i]
+            token_padded[i, : batch["token_len"][i]] = torch.LongTensor(token_ids)
+
+            wav = batch["wav"][i]
+            wav_padded[i, :, : wav.size(1)] = torch.FloatTensor(wav)
+
+            token_ids_phonems_styletts_len = batch["token_len_phonems_styletts"][i]
+            token_ids_phonems_styletts_padded[i, : token_ids_phonems_styletts_len] = torch.LongTensor(
+                batch["token_ids_phonems_styletts"][i]
+            )
+
+        return {
+            "tokens": token_padded,
+            "token_lens": token_lens,
+            "token_rel_lens": token_rel_lens,
+            "token_ids_phonems_styletts": token_ids_phonems_styletts_padded,
+            "token_lens_phonems_styletts": token_ids_phonems_styletts_lens,
+            "token_rel_lens_phonems_styletts": token_ids_phonems_styletts_rel_lens,
+            "waveform": wav_padded,  # (B x T)
+            "waveform_lens": wav_lens,  # (B)
+            "waveform_rel_lens": wav_rel_lens,
+            "speaker_names": batch["speaker_name"],
+            "language_names": batch["language_name"],
+            "audio_files": batch["wav_file"],
+            "raw_text": batch["raw_text"],
+            "audio_unique_names": batch["audio_unique_name"],
+        }
+
 ##############################
 # MODEL DEFINITION
 ##############################
@@ -618,6 +938,9 @@ class VitsArgs(Coqpit):
     reinit_text_encoder: bool = False
     use_prosody_embedding: bool = False
     embedded_prosody_dim: int = 0
+    use_plbert: bool = False
+    plbert_model_path: str = None
+    plbert_embedding_dim: int = 768
 
 
 class ProsodyEncoder(nn.Module):
@@ -656,8 +979,6 @@ class ProsodyEncoder(nn.Module):
         # Fully connected layers for mean and log variance
         self.fc_mu = nn.Linear(2 * lstm_units, z_dim)
         self.fc_logvar = nn.Linear(2 * lstm_units, z_dim)
-
-        
 
     def reparametrize(self, mu, logvar):
         """
@@ -746,6 +1067,10 @@ class Vits(BaseTTS):
     ):
         super().__init__(config, ap, tokenizer, speaker_manager, language_manager)
 
+        print("="*100)
+        print(f"DETACH DP INPUT: {self.args.detach_dp_input}")
+        print("="*100)
+
         self.init_multispeaker(config)
         self.init_multilingual(config)
         self.init_upsampling()
@@ -800,6 +1125,10 @@ class Vits(BaseTTS):
             num_layers=self.args.num_layers_flow,
             cond_channels=self.embedded_speaker_dim,
         )
+
+        if self.args.use_plbert:
+            self.pl_bert = load_plbert(self.args.plbert_model_path)
+            self.pl_bert.train()
 
         if self.args.use_sdp:
             self.duration_predictor = StochasticDurationPredictor(
@@ -1021,7 +1350,11 @@ class Vits(BaseTTS):
         if "mel" in aux_input and aux_input["mel"] is not None:
             mel = aux_input["mel"]
 
-        return sid, g, lid, durations, spec, mel
+        attention_mask = None
+        if "attention_mask" in aux_input and aux_input["attention_mask"] is not None:
+            attention_mask = aux_input["attention_mask"]
+
+        return sid, g, lid, durations, spec, mel, attention_mask
 
     def _set_speaker_input(self, aux_input: Dict):
         d_vectors = aux_input.get("d_vectors", None)
@@ -1067,7 +1400,7 @@ class Vits(BaseTTS):
                 x_mask,
                 g=g.detach() if self.args.detach_dp_input and g is not None else g,
                 lang_emb=lang_emb.detach() if self.args.detach_dp_input and lang_emb is not None else lang_emb,
-                prosody_emb=prosody_emb.detach() if self.args.detach_dp_input and prosody_emb is not None else prosody_emb,
+                prosody_emb=prosody_emb.detach() if self.args.detach_dp_input and prosody_emb is not None else prosody_emb
             )
             loss_duration = torch.sum((log_durations - attn_log_durations) ** 2, [1, 2]) / torch.sum(x_mask)
         outputs["loss_duration"] = loss_duration
@@ -1089,6 +1422,11 @@ class Vits(BaseTTS):
                     )  # [B, 1, T_dec_resampled]
 
         return z, spec_segment_size, slice_ids, y_mask
+
+    def length_to_mask(self, lengths):
+        mask = torch.arange(lengths.max()).unsqueeze(0).expand(lengths.shape[0], -1).type_as(lengths)
+        mask = torch.gt(mask+1, lengths.unsqueeze(1))
+        return mask
 
     def forward(  # pylint: disable=dangerous-default-value
         self,
@@ -1141,7 +1479,7 @@ class Vits(BaseTTS):
             print(" [!] Input tensor has NaN values.")
 
         outputs = {}
-        sid, g, lid, _, _, mel = self._set_cond_input(aux_input)
+        sid, g, lid, _, _, mel, attention_mask = self._set_cond_input(aux_input)
 
         # check if is nan sid, g, lid
         if sid is not None and torch.isnan(sid).any():
@@ -1149,10 +1487,11 @@ class Vits(BaseTTS):
 
         if g is not None and torch.isnan(g).any():
             print(" [!] Speaker embedding tensor has NaN values.")
+            # transform nan values to zeros
+            g = torch.where(torch.isnan(g), torch.zeros_like(g), g)
 
         if lid is not None and torch.isnan(lid).any():
             print(" [!] Language ID tensor has NaN values.")
-
 
         # speaker embedding
         if self.args.use_speaker_embedding and sid is not None:
@@ -1169,7 +1508,7 @@ class Vits(BaseTTS):
             prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(mel)
             prosody_emb = prosody_emb.unsqueeze(-1)
 
-        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, prosody_emb=prosody_emb)
+        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, att_mask=attention_mask, lang_emb=lang_emb, prosody_emb=prosody_emb)
 
         # posterior encoder
         z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=g)
@@ -1265,7 +1604,7 @@ class Vits(BaseTTS):
             - m_p: :math:`[B, C, T_dec]`
             - logs_p: :math:`[B, C, T_dec]`
         """
-        sid, g, lid, durations, spec, mel = self._set_cond_input(aux_input)
+        sid, g, lid, durations, _, mel, attention_mask = self._set_cond_input(aux_input)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
@@ -1282,7 +1621,7 @@ class Vits(BaseTTS):
             prosody_emb, prosody_mu, prosody_logvar = self.prosody_encoder(mel)
             prosody_emb = prosody_emb.unsqueeze(-1)
 
-        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, prosody_emb=prosody_emb)
+        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, att_mask=attention_mask, lang_emb=lang_emb, prosody_emb=prosody_emb)
 
         if durations is None:
             if self.args.use_sdp:
@@ -1301,7 +1640,7 @@ class Vits(BaseTTS):
                     x_mask,
                     g=g if self.args.condition_dp_on_speaker else None,
                     lang_emb=lang_emb,
-                    prosody_emb=prosody_emb
+                    prosody_emb=prosody_emb,
                 )
             w = torch.exp(logw) * x_mask * self.length_scale
         else:
@@ -1404,7 +1743,6 @@ class Vits(BaseTTS):
         Returns:
             Tuple[Dict, Dict]: Model ouputs and computed losses.
         """
-
         spec_lens = batch["spec_lens"]
 
         if optimizer_idx == 0:
@@ -1418,6 +1756,11 @@ class Vits(BaseTTS):
             language_ids = batch["language_ids"]
             waveform = batch["waveform"]
 
+            attention_mask = batch["attention_mask"]
+
+            # styletts_token_ids = batch["token_ids_phonems_styletts"]
+            # styletts_token_lengths = batch["token_lens_phonems_styletts"]
+
             # generator pass
             outputs = self.forward(
                 tokens,
@@ -1430,8 +1773,23 @@ class Vits(BaseTTS):
                     "speaker_ids": speaker_ids,
                     "language_ids": language_ids,
                     "mel": mel,
+                    "attention_mask": attention_mask,
                 },
             )
+
+            # outputs = self.forward(
+            #     styletts_token_ids,
+            #     styletts_token_lengths,
+            #     spec,
+            #     spec_lens,
+            #     waveform,
+            #     aux_input={
+            #         "d_vectors": d_vectors,
+            #         "speaker_ids": speaker_ids,
+            #         "language_ids": language_ids,
+            #         "mel": mel,
+            #     },
+            # )
 
             # cache tensors for the generator pass
             self.model_outputs_cache = outputs  # pylint: disable=attribute-defined-outside-init
@@ -1654,7 +2012,19 @@ class Vits(BaseTTS):
                 d_vector = d_vector.squeeze().unsqueeze(0).to(device)
             return d_vector
 
-        def inference(ref_wav_path, text, language_id=None, device="cuda"):
+        def inference(ref_wav_path, text, language_id_code=None, device="cuda"):
+            language2id = {
+                "en": "eng-us",
+                "pt-br": "por-bz",
+                "pl": "pol",
+                "it": "ita",
+                "fr": "fra",
+                "du": "dut",
+                "ge": "ger",
+                "sp": "spa",
+            }
+            xphonebert_tokenizer = AutoTokenizer.from_pretrained("vinai/xphonebert-base")
+
             d_vector = self.speaker_manager.compute_embedding_from_clip(ref_wav_path)
             wav, sr = load_audio(ref_wav_path)
             if sr != self.config.audio["sample_rate"]:
@@ -1683,7 +2053,7 @@ class Vits(BaseTTS):
                 fmax=self.config.audio.mel_fmax,
             )
 
-            language_id = self.language_manager.name_to_id.get(language_id, None)
+            language_id = self.language_manager.name_to_id.get(language_id_code, None)
 
             language_name = None
             if language_id is not None:
@@ -1691,13 +2061,14 @@ class Vits(BaseTTS):
                 assert len(language) == 1, "language_id must be a valid language"
                 language_name = language[0]
 
-            text_inputs = np.asarray(
-                self.tokenizer.text_to_ids(text, language=language_name),
-                dtype=np.int32,
-            )
+            language_id = language2id[language_id_code]
+            text2phone_model = Text2PhonemeSequence(language=language_id, is_cuda=False)
 
-            text_inputs = numpy_to_torch(text_inputs, torch.long, device=device)
-            text_inputs = text_inputs.unsqueeze(0)
+            input_phonemes = text2phone_model.infer_sentence(text)
+            input_ids = xphonebert_tokenizer(input_phonemes, return_tensors="pt")
+
+            token_ids = input_ids["input_ids"].squeeze(0)
+            attention_mask = input_ids["attention_mask"].squeeze(0)
 
             d_vectors = embedding_to_torch(d_vector, device=device)
 
@@ -1705,7 +2076,7 @@ class Vits(BaseTTS):
                 language_id = id_to_torch(language_id, device=device)
 
             out = self.inference(
-                text_inputs,
+                token_ids,
                 aux_input={
                     "x_lengths": None,
                     "d_vectors": d_vectors,
@@ -1714,6 +2085,7 @@ class Vits(BaseTTS):
                     "durations": None,
                     "spec": spec,
                     "mel": mel,
+                    "attention_mask": attention_mask,
                 },
             )
 
@@ -1724,8 +2096,6 @@ class Vits(BaseTTS):
         test_figures = {}
         test_sentences = self.config.test_sentences
         for idx, s_info in enumerate(test_sentences):
-            print("%"*100)
-            print(idx)
             if isinstance(s_info, list):
                 if len(s_info) == 1:
                     text = s_info[0]
@@ -1737,6 +2107,8 @@ class Vits(BaseTTS):
                     text, speaker_name, style_wav, language_name = s_info
                 elif len(s_info) == 5:
                     text, speaker_name, style_wav, language_name, wav_path = s_info
+
+            print(" | > Processing sentence: ", text)
 
             wav, alignment = inference(wav_path, text, language_name)
             wav = wav.squeeze(0).cpu().numpy()
@@ -1767,7 +2139,14 @@ class Vits(BaseTTS):
         # get d_vectors from audio file names
         if self.speaker_manager is not None and self.speaker_manager.embeddings and self.args.use_d_vector_file:
             d_vector_mapping = self.speaker_manager.embeddings
-            d_vectors = [d_vector_mapping[w]["embedding"] for w in batch["audio_unique_names"]]
+            # d_vectors = [d_vector_mapping[w]["embedding"] for w in batch["audio_unique_names"]]
+            # d_vectors = torch.FloatTensor(d_vectors)
+            d_vectors = []
+            for w, spk in zip(batch["audio_unique_names"], batch["speaker_names"]):
+                if w in d_vector_mapping:
+                    d_vectors.append(d_vector_mapping[w]["embedding"])
+                else:
+                    d_vectors.append(self.speaker_manager.get_mean_embedding(spk))
             d_vectors = torch.FloatTensor(d_vectors)
 
         # get language ids from language names
@@ -1884,8 +2263,7 @@ class Vits(BaseTTS):
         if is_eval and not config.run_eval:
             loader = None
         else:
-            # init dataloader
-            dataset = VitsDataset(
+            dataset = XPhoneBERTVitsDataset(
                 model_args=self.args,
                 samples=samples,
                 batch_group_size=0 if is_eval else config.batch_group_size * config.batch_size,

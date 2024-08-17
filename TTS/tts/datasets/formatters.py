@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import xml.etree.ElementTree as ET
 from glob import glob
 from pathlib import Path
@@ -52,6 +53,50 @@ def libri_tts_r(root_path, meta_files=None, ignored_speakers=None):
     return items
 
 
+def libri_tts_r_phonemes(root_path, meta_files=None, ignored_speakers=None):
+    """https://ai.google/tools/datasets/libri-tts/"""
+    items = []
+    if not meta_files:
+        meta_files = glob(f"{root_path}/**/*trans_phonemes_xphonebert.tsv", recursive=True)
+    else:
+        if isinstance(meta_files, str):
+            meta_files = [os.path.join(root_path, meta_files)]
+
+    for meta_file in meta_files:
+        _meta_file = os.path.basename(meta_file).split(".")[0]
+        with open(meta_file, "r", encoding="utf-8") as ttf:
+            for line in ttf:
+                cols = line.split("\t")
+                file_name = cols[0]
+                speaker_name, chapter_id, *_ = cols[0].split("_")
+                _root_path = os.path.join(root_path, f"{speaker_name}/{chapter_id}")
+                wav_file = os.path.join(_root_path, file_name + ".wav")
+                if not os.path.exists(wav_file):
+                    # print(f" [!] wav files don't exist - {wav_file}")
+                    continue
+                text = cols[2]
+                phonemes = cols[3]
+                # ignore speakers
+                if isinstance(ignored_speakers, list):
+                    if speaker_name in ignored_speakers:
+                        continue
+                # print(text, wav_file, speaker_name)
+                items.append(
+                    {
+                        "text": text,
+                        "phonemes": phonemes,
+                        "audio_file": wav_file,
+                        "speaker_name": f"LTTS_{speaker_name}",
+                        "root_path": root_path,
+                    }
+                )
+    for item in items:
+        assert os.path.exists(item["audio_file"]), f" [!] wav files don't exist - {item['audio_file']}"
+    print(f" | > [!] {len(items)} files found")
+    return items
+
+
+
 def alc_tts(root_path, meta_file, ignored_speakers=None):
     """Interal dataset formatter."""
     metadata_filepath = os.path.join(root_path, meta_file)
@@ -75,6 +120,7 @@ def alc_tts(root_path, meta_file, ignored_speakers=None):
         items.append(
             {
                 "text": row.sentence,
+                "phonemes": row.phonemes,
                 "audio_file": audio_path,
                 "speaker_name": speaker_name,
                 "emotion_name": emotion_name if emotion_name is not None else row.emotion_name,
@@ -91,15 +137,65 @@ def cml_tts(root_path, meta_file, ignored_speakers=None):
     https://github.com/freds0/CML-TTS-Dataset/"""
     filepath = os.path.join(root_path, meta_file)
     # ensure there are 4 columns for every line
-    # with open(filepath, "r", encoding="utf8") as f:
-    #     lines = f.readlines()
-    # num_cols = len(lines[0].split("|"))  # take the first row as reference
-    # for idx, line in enumerate(lines[1:]):
-    #     if len(line.split("|")) != num_cols:
-    #         print(f" > Missing column in line {idx + 1} -> {line.strip()}")
+    with open(filepath, "r", encoding="utf8") as f:
+        lines = f.readlines()
+    num_cols = len(lines[0].split("|"))  # take the first row as reference
+    for idx, line in enumerate(lines[1:]):
+        if len(line.split("|")) != num_cols:
+            print(f" > Missing column in line {idx + 1} -> {line.strip()}")
+
     # load metadata
-    metadata = pd.read_csv(meta_file)
-    assert all(x in metadata.columns for x in ["audio_segment_path", "sentence"])
+    metadata = pd.read_csv(os.path.join(root_path, meta_file), sep="|")
+    assert all(x in metadata.columns for x in ["wav_filename", "transcript"])
+    client_id = None if "client_id" in metadata.columns else "default"
+    emotion_name = None if "emotion_name" in metadata.columns else "neutral"
+    items = []
+    not_found_counter = 0
+
+    skipped_counter = 0
+    for row in metadata.itertuples():
+        wav2vec_trans = row.transcript_wav2vec
+        trans = row.transcript
+        # check if the transcript is a float
+        if isinstance(wav2vec_trans, float) or isinstance(trans, float) or len(trans)<5:
+            skipped_counter+=1
+            continue
+        if client_id is None and ignored_speakers is not None and row.client_id in ignored_speakers:
+            continue
+        audio_path = os.path.join(root_path, row.wav_filename)
+        if not os.path.exists(audio_path):
+            not_found_counter += 1
+            continue
+        items.append(
+            {
+                "text": row.transcript,
+                "audio_file": audio_path,
+                "speaker_name": client_id if client_id is not None else row.client_id,
+                "emotion_name": emotion_name if emotion_name is not None else row.emotion_name,
+                "root_path": root_path,
+            }
+        )
+    if not_found_counter > 0:
+        print(f" | > [!] {not_found_counter} files not found")
+    if skipped_counter > 0:
+        print(f" | > [!] {skipped_counter} files skipped due to missing values")
+    return items
+
+
+def cml_tts_phonemes(root_path, meta_file, ignored_speakers=None):
+    """Normalizes the CML-TTS meta data file to TTS format
+    https://github.com/freds0/CML-TTS-Dataset/"""
+    filepath = os.path.join(root_path, meta_file)
+    # ensure there are 4 columns for every line
+    with open(filepath, "r", encoding="utf8") as f:
+        lines = f.readlines()
+    num_cols = len(lines[0].split("|"))  # take the first row as reference
+    for idx, line in enumerate(lines[1:]):
+        if len(line.split("|")) != num_cols:
+            print(f" > Missing column in line {idx + 1} -> {line.strip()}")
+    # load metadata
+    metadata = pd.read_csv(os.path.join(root_path, meta_file), sep="|")
+    assert all(x in metadata.columns for x in ["wav_filename", "transcript"])
     client_id = None if "client_id" in metadata.columns else "default"
     emotion_name = None if "emotion_name" in metadata.columns else "neutral"
     items = []
@@ -107,16 +203,14 @@ def cml_tts(root_path, meta_file, ignored_speakers=None):
     for row in metadata.itertuples():
         if client_id is None and ignored_speakers is not None and row.client_id in ignored_speakers:
             continue
-        audio_path = os.path.join(root_path, row.audio_segment_path)
-        if row.cer > 0.2 or row.duration < 2.0:
-            continue
-
+        audio_path = os.path.join(root_path, row.wav_filename)
         if not os.path.exists(audio_path):
             not_found_counter += 1
             continue
         items.append(
             {
-                "text": row.sentence,
+                "text": row.transcript,
+                "phonemes": row.phonemes,
                 "audio_file": audio_path,
                 "speaker_name": client_id if client_id is not None else row.client_id,
                 "emotion_name": emotion_name if emotion_name is not None else row.emotion_name,

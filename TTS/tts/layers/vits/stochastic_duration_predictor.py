@@ -233,6 +233,7 @@ class StochasticDurationPredictor(nn.Module):
         """
         # condition encoder text
         x = self.pre(x)
+
         if g is not None:
             x = x + self.cond(g)
 

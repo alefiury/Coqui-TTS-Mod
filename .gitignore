@@ -13,6 +13,7 @@ normalize_text/
 dataset_metadata/
 input_audios/
 output/
+LibriTTS_R/
 output_570000/
 datasets_audios/
 checkpoints/
